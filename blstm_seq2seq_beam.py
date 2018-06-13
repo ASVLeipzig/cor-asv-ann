@@ -431,7 +431,7 @@ def decode_sequence_beam(source_seq):
             for best, logscore in zip(scores_best, logscores): # follow up on beam_width best predictions
                 decoder.setstate(n.extras)
                 try:
-                    decoder.decode([best+1])
+                    decoder.decode(bytes([best+1]))
                     n_new = Node(parent=n, state=states, value=best, cost=logscore, extras=decoder.getstate())
                     next_fringe.append(n_new)
                 except UnicodeDecodeError:
