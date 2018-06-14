@@ -398,7 +398,7 @@ def decode_sequence_beam(source_seq):
     hypotheses = []
     
     # generator will raise StopIteration if hypotheses is still empty after loop
-    for l in range(50):
+    for l in range(300):
         # try:
         #     next(n for n in next_fringe if all(np.array_equal(x,y) for x,y in zip(nonbeam_states[:l+1], [s.state for s in n.to_sequence()])))
         # except StopIteration:
