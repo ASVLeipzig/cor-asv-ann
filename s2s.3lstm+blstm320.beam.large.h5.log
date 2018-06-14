@@ -1,0 +1,1378 @@
+Number of samples: 13859
+Max sequence length for sources: 18
+Max sequence length for targets: 63
+Train on 11087 samples, validate on 2772 samples
+Epoch 1/100
+11087/11087 [==============================] - 342s 31ms/step - loss: 3.0429 - val_loss: 2.9616
+Epoch 2/100
+11087/11087 [==============================] - 339s 31ms/step - loss: 2.8437 - val_loss: 2.7666
+Epoch 3/100
+11087/11087 [==============================] - 338s 31ms/step - loss: 2.3509 - val_loss: 2.0980
+Epoch 4/100
+11087/11087 [==============================] - 338s 31ms/step - loss: 1.8055 - val_loss: 1.6696
+Epoch 5/100
+11087/11087 [==============================] - 339s 31ms/step - loss: 1.5414 - val_loss: 1.5187
+Epoch 6/100
+11087/11087 [==============================] - 339s 31ms/step - loss: 1.3547 - val_loss: 1.3380
+Epoch 7/100
+11087/11087 [==============================] - 339s 31ms/step - loss: 1.2099 - val_loss: 1.2389
+Epoch 8/100
+11087/11087 [==============================] - 339s 31ms/step - loss: 1.0937 - val_loss: 1.1639
+Epoch 9/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.9921 - val_loss: 1.1175
+Epoch 10/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.9062 - val_loss: 1.0822
+Epoch 11/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.8295 - val_loss: 0.9943
+Epoch 12/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.7623 - val_loss: 0.9526
+Epoch 13/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.6998 - val_loss: 0.9139
+Epoch 14/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.6423 - val_loss: 0.9023
+Epoch 15/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.5911 - val_loss: 0.8900
+Epoch 16/100
+11087/11087 [==============================] - 338s 30ms/step - loss: 0.5423 - val_loss: 0.8487
+Epoch 17/100
+11087/11087 [==============================] - 346s 31ms/step - loss: 0.4980 - val_loss: 0.8574
+Epoch 00017: early stopping
+Source text from training: I paid the check.
+
+Target text from training: 	J'ai payé l'addition.
+
+Target prediction (greedy): J'ai pris le proche.
+
+Target prediction (beamed): 	J'ai pris de l'aide.
+
+Source text from training: This is my home.
+
+Target text from training: 	C'est ma maison.
+
+Target prediction (greedy): C'est mon ami.
+
+Target prediction (beamed): 	C'est mon ami.
+
+Source text from training: Who goes there?
+
+Target text from training: 	Qui va là ?
+
+Target prediction (greedy): Qui a été blessée ?
+
+Target prediction (beamed): 	Qui a été bonne ?
+
+Source text from test: It's garbage.
+
+Target text from test: 	Ce sont des détritus.
+
+Target prediction (greedy): C'est une promie.
+
+Target prediction (beamed): 	C'est une colère.
+
+Source text from test: How is everyone?
+
+Target text from test: 	Comment va tout le monde ?
+
+Target prediction (greedy): Comment êtes sont-ils de l'air frais ?
+
+Target prediction (beamed): 	Comment avez-vous grand ?
+
+Source text from test: That's a plan.
+
+Target text from test: 	Voilà un plan.
+
+Target prediction (greedy): C'est une pas folle.
+
+Target prediction (beamed): 	C'est une plan.
+
+Number of samples: 11333
+Max sequence length for sources: 21
+Max sequence length for targets: 59
+Train on 9066 samples, validate on 2267 samples
+Epoch 1/100
+9066/9066 [==============================] - 272s 30ms/step - loss: 0.9829 - val_loss: 0.9235
+Epoch 2/100
+9066/9066 [==============================] - 271s 30ms/step - loss: 0.8042 - val_loss: 0.8648
+Epoch 3/100
+9066/9066 [==============================] - 271s 30ms/step - loss: 0.7017 - val_loss: 0.8232
+Epoch 4/100
+9066/9066 [==============================] - 272s 30ms/step - loss: 0.6233 - val_loss: 0.8044
+Epoch 5/100
+9066/9066 [==============================] - 271s 30ms/step - loss: 0.5539 - val_loss: 0.8009
+Epoch 6/100
+9066/9066 [==============================] - 272s 30ms/step - loss: 0.4938 - val_loss: 0.7828
+Epoch 7/100
+9066/9066 [==============================] - 271s 30ms/step - loss: 0.4409 - val_loss: 0.7863
+Epoch 00007: early stopping
+Source text from training: Is she your mother?
+
+Target text from training: 	Est-elle votre mère ?
+
+Target prediction (greedy): Est-elle votre maison ?
+
+Target prediction (beamed): 	Est-elle votre maison ?
+
+Source text from training: You better hurry.
+
+Target text from training: 	Tu ferais mieux de te grouiller !
+
+Target prediction (greedy): Vous feriez mieux de vous dépêcher.
+
+Target prediction (beamed): 	Vous feriez mieux d'y aller.
+
+Source text from training: You won't be fired.
+
+Target text from training: 	Tu ne seras pas virée.
+
+Target prediction (greedy): Vous ne serez pas virée.
+
+Target prediction (beamed): 	Vous ne serez pas virée.
+
+Source text from test: They're not evil.
+
+Target text from test: 	Ils ne sont pas mauvais.
+
+Target prediction (greedy): Ils sont maintenant en retard.
+
+Target prediction (beamed): 	Ils ne sont pas seuls.
+
+Source text from test: They've all left.
+
+Target text from test: 	Ils sont tous partis.
+
+Target prediction (greedy): Elles sont toutes mariés.
+
+Target prediction (beamed): 	Elles sont toutes mariés.
+
+Source text from test: It can't hurt you.
+
+Target text from test: 	Ça ne peut pas vous faire de mal.
+
+Target prediction (greedy): Ce n'est pas très vieux.
+
+Target prediction (beamed): 	Ça ne peut pas être vrai.
+
+Number of samples: 10216
+Max sequence length for sources: 22
+Max sequence length for targets: 67
+Train on 8172 samples, validate on 2044 samples
+Epoch 1/100
+8172/8172 [==============================] - 272s 33ms/step - loss: 0.9117 - val_loss: 0.8745
+Epoch 2/100
+8172/8172 [==============================] - 272s 33ms/step - loss: 0.7298 - val_loss: 0.8104
+Epoch 3/100
+8172/8172 [==============================] - 272s 33ms/step - loss: 0.6246 - val_loss: 0.7870
+Epoch 4/100
+8172/8172 [==============================] - 272s 33ms/step - loss: 0.5410 - val_loss: 0.7717
+Epoch 5/100
+8172/8172 [==============================] - 272s 33ms/step - loss: 0.4702 - val_loss: 0.7676
+Epoch 6/100
+8172/8172 [==============================] - 272s 33ms/step - loss: 0.4091 - val_loss: 0.7613
+Epoch 7/100
+8172/8172 [==============================] - 275s 34ms/step - loss: 0.3565 - val_loss: 0.7768
+Epoch 00007: early stopping
+Source text from training: You don't have to go.
+
+Target text from training: 	Vous n'êtes pas forcés de vous en aller.
+
+Target prediction (greedy): Tu n'en auras pas besoin.
+
+Target prediction (beamed): 	Vous n'êtes pas forcés de vous en aller.
+
+Source text from training: Where are the others?
+
+Target text from training: 	Où les autres sont-ils ?
+
+Target prediction (greedy): Où sont les autres ?
+
+Target prediction (beamed): 	Où sont les autres ?
+
+Source text from training: He came into my room.
+
+Target text from training: 	Il rentra dans ma chambre.
+
+Target prediction (greedy): Il est venu dans ma chambre.
+
+Target prediction (beamed): 	Il est venu dans ma chambre.
+
+Source text from test: Tom took a bad fall.
+
+Target text from test: 	Tom fit une mauvaise chute.
+
+Target prediction (greedy): Tom a pris une grosse chambre.
+
+Target prediction (beamed): 	Tom a pris une grosse chambre.
+
+Source text from test: Forget your sorrows.
+
+Target text from test: 	Oubliez vos peines.
+
+Target prediction (greedy): Oublie tes chaisses sont malades.
+
+Target prediction (beamed): 	Oublie tes lunettes !
+
+Source text from test: I made sure of that.
+
+Target text from test: 	Je m'en suis assuré.
+
+Target prediction (greedy): J'ai fait cela à l'étrerrifier.
+
+Target prediction (beamed): 	J'ai fait confiance à Tom.
+
+Number of samples: 9484
+Max sequence length for sources: 24
+Max sequence length for targets: 75
+Train on 7587 samples, validate on 1897 samples
+Epoch 1/100
+7587/7587 [==============================] - 282s 37ms/step - loss: 0.8891 - val_loss: 0.8393
+Epoch 2/100
+7587/7587 [==============================] - 280s 37ms/step - loss: 0.6854 - val_loss: 0.8067
+Epoch 3/100
+7587/7587 [==============================] - 281s 37ms/step - loss: 0.5714 - val_loss: 0.7837
+Epoch 4/100
+7587/7587 [==============================] - 281s 37ms/step - loss: 0.4823 - val_loss: 0.7781
+Epoch 5/100
+7587/7587 [==============================] - 280s 37ms/step - loss: 0.4112 - val_loss: 0.7796
+Epoch 00005: early stopping
+Source text from training: I bought Mary a scarf.
+
+Target text from training: 	J'ai acheté une écharpe à Mary.
+
+Target prediction (greedy): J'ai acheté un nouveau costume.
+
+Target prediction (beamed): 	J'ai acheté un nouveau chapeau.
+
+Source text from training: Bring me today's paper.
+
+Target text from training: 	Rapporte-moi le journal du jour.
+
+Target prediction (greedy): Apporte-moi le monde sujet.
+
+Target prediction (beamed): 	Apporte-moi le journal.
+
+Source text from training: My class was canceled.
+
+Target text from training: 	Mon cours fut annulé.
+
+Target prediction (greedy): Mon chat est dépourvue.
+
+Target prediction (beamed): 	Mon chat est fini.
+
+Source text from test: What was the question?
+
+Target text from test: 	Quelle était la question ?
+
+Target prediction (greedy): Qu'est-ce qui le fille ?
+
+Target prediction (beamed): 	Qu'est-ce qu'il a dit ça ?
+
+Source text from test: I should be in charge.
+
+Target text from test: 	Je devrais être aux commandes.
+
+Target prediction (greedy): Je devrais être avec les pensentes.
+
+Target prediction (beamed): 	Je devrais aller au lit.
+
+Source text from test: Don't expect overtime.
+
+Target text from test: 	N'espère pas d'heures supplémentaires !
+
+Target prediction (greedy): N'espérez pas très triste !
+
+Target prediction (beamed): 	N'espérez pas trop tôt.
+
+Number of samples: 8993
+Max sequence length for sources: 26
+Max sequence length for targets: 62
+Train on 7194 samples, validate on 1799 samples
+Epoch 1/100
+7194/7194 [==============================] - 233s 32ms/step - loss: 0.8484 - val_loss: 0.8161
+Epoch 2/100
+7194/7194 [==============================] - 237s 33ms/step - loss: 0.6540 - val_loss: 0.7841
+Epoch 3/100
+7194/7194 [==============================] - 234s 33ms/step - loss: 0.5377 - val_loss: 0.7696
+Epoch 4/100
+7194/7194 [==============================] - 235s 33ms/step - loss: 0.4526 - val_loss: 0.7615
+Epoch 5/100
+7194/7194 [==============================] - 235s 33ms/step - loss: 0.3796 - val_loss: 0.7617
+Epoch 00005: early stopping
+Source text from training: Tom isn't a boy anymore.
+
+Target text from training: 	Tom n'est plus un garçon.
+
+Target prediction (greedy): Tom n'a pas de bon sensible.
+
+Target prediction (beamed): 	Tom n'était plus un chien.
+
+Source text from training: Can you open the window?
+
+Target text from training: 	Parviens-tu à ouvrir la fenêtre ?
+
+Target prediction (greedy): Pouvez-vous me passer le sel ?
+
+Target prediction (beamed): 	Pouvez-vous ouvrir la porte ?
+
+Source text from training: They're all watching TV.
+
+Target text from training: 	Ils sont tous en train de regarder la télé.
+
+Target prediction (greedy): Ils vont corrient.
+
+Target prediction (beamed): 	Ils vont corrient.
+
+Source text from test: It's very hot, isn't it?
+
+Target text from test: 	Il fait très chaud, n'est-ce pas ?
+
+Target prediction (greedy): C'est que tu sait comme ça ?
+
+Target prediction (beamed): 	C'est que tu sait ici ?
+
+Source text from test: It's been so many years.
+
+Target text from test: 	Ça fait tellement d'années.
+
+Target prediction (greedy): C'est presque très bien pour elle.
+
+Target prediction (beamed): 	C'est presque jeune et tire.
+
+Source text from test: Whose suitcase is that?
+
+Target text from test: 	À qui est cette valise ?
+
+Target prediction (greedy): À qui est cet ordinateur de son ?
+
+Target prediction (beamed): 	À qui est cet ordinateur ?
+
+Number of samples: 8461
+Max sequence length for sources: 27
+Max sequence length for targets: 62
+Train on 6768 samples, validate on 1693 samples
+Epoch 1/100
+6768/6768 [==============================] - 223s 33ms/step - loss: 0.8108 - val_loss: 0.7655
+Epoch 2/100
+6768/6768 [==============================] - 224s 33ms/step - loss: 0.6175 - val_loss: 0.7350
+Epoch 3/100
+6768/6768 [==============================] - 225s 33ms/step - loss: 0.5052 - val_loss: 0.7182
+Epoch 4/100
+6768/6768 [==============================] - 222s 33ms/step - loss: 0.4202 - val_loss: 0.7182
+Epoch 5/100
+6768/6768 [==============================] - 223s 33ms/step - loss: 0.3504 - val_loss: 0.7315
+Epoch 00005: early stopping
+Source text from training: I can't swim any further.
+
+Target text from training: 	Je ne peux pas nager plus loin.
+
+Target prediction (greedy): Je ne peux pas me permettre de regarder la télévision.
+
+Target prediction (beamed): 	Je ne peux pas me permettre de regarder ici.
+
+Source text from training: I feel like another beer.
+
+Target text from training: 	J'ai envie d'une autre bière.
+
+Target prediction (greedy): J'ai envie d'une autre bière.
+
+Target prediction (beamed): 	J'ai envie d'une autre bière.
+
+Source text from training: I must renew my passport.
+
+Target text from training: 	Je dois faire renouveler mon passeport.
+
+Target prediction (greedy): Je dois me promettre de chance.
+
+Target prediction (beamed): 	Je dois rentrer mes propres maintenant.
+
+Source text from test: Where did that come from?
+
+Target text from test: 	D'où est-ce venu ?
+
+Target prediction (greedy): D'où cela marche-toi ?
+
+Target prediction (beamed): 	D'où cela marche-toi ?
+
+Source text from test: Keep to the left, please.
+
+Target text from test: 	Prenez à gauche, s'il vous plaît.
+
+Target prediction (greedy): Garde cette pièce arrivé.
+
+Target prediction (beamed): 	Garde cette pièce arrivé.
+
+Source text from test: I wonder what his name is.
+
+Target text from test: 	Je me demande quel est son nom.
+
+Target prediction (greedy): Je me demande qu'il est heureux.
+
+Target prediction (beamed): 	Je me demande ce que c'est.
+
+Number of samples: 8162
+Max sequence length for sources: 28
+Max sequence length for targets: 69
+Train on 6529 samples, validate on 1633 samples
+Epoch 1/100
+6529/6529 [==============================] - 237s 36ms/step - loss: 0.8524 - val_loss: 0.8828
+Epoch 2/100
+6529/6529 [==============================] - 235s 36ms/step - loss: 0.6452 - val_loss: 0.8258
+Epoch 3/100
+6529/6529 [==============================] - 235s 36ms/step - loss: 0.5307 - val_loss: 0.8455
+Epoch 00003: early stopping
+Source text from training: She has long arms and legs.
+
+Target text from training: 	Elle a de longs bras et de longues jambes.
+
+Target prediction (greedy): Elle a deux coûtent de livres.
+
+Target prediction (beamed): 	Elle a beaucoup de coûtenteure.
+
+Source text from training: He has no house to live in.
+
+Target text from training: 	Il n'a pas de maison où vivre.
+
+Target prediction (greedy): Il n'a pas eu le chemer en train de faire.
+
+Target prediction (beamed): 	Il n'a rien coûtent troiser.
+
+Source text from training: I just want to be prepared.
+
+Target text from training: 	Je veux être prête, un point c'est tout.
+
+Target prediction (greedy): Je veux juste que tu peux trouver.
+
+Target prediction (beamed): 	Je veux simplement être vrai.
+
+Source text from test: The chicken is overcooked.
+
+Target text from test: 	Le poulet est trop cuit.
+
+Target prediction (greedy): Le train est trope coûtent en coûtenteux.
+
+Target prediction (beamed): 	Le travail est trope.
+
+Source text from test: The phone was off the hook.
+
+Target text from test: 	Le téléphone était décroché.
+
+Target prediction (greedy): Le train est entre en train de faire ce mateur.
+
+Target prediction (beamed): 	Le chien est trop celle.
+
+Source text from test: She read the poem out loud.
+
+Target text from test: 	Elle lut le poème à haute voix.
+
+Target prediction (greedy): Elle a pris ses troles en coûtentent.
+
+Target prediction (beamed): 	Elle est venu trois ouvreux.
+
+Number of samples: 7783
+Max sequence length for sources: 30
+Max sequence length for targets: 80
+Train on 6226 samples, validate on 1557 samples
+Epoch 1/100
+6226/6226 [==============================] - 254s 41ms/step - loss: 0.8109 - val_loss: 0.7922
+Epoch 2/100
+6226/6226 [==============================] - 254s 41ms/step - loss: 0.6216 - val_loss: 0.7597
+Epoch 3/100
+6226/6226 [==============================] - 254s 41ms/step - loss: 0.5024 - val_loss: 0.7505
+Epoch 4/100
+6226/6226 [==============================] - 253s 41ms/step - loss: 0.4111 - val_loss: 0.7612
+Epoch 00004: early stopping
+Source text from training: How do you know what I said?
+
+Target text from training: 	Comment sais-tu ce que j'ai dit ?
+
+Target prediction (greedy): Comment sais-tu ce que j'ai fait ?
+
+Target prediction (beamed): 	Comment sais-tu ce que j'ai fait ?
+
+Source text from training: Let's give it all we've got.
+
+Target text from training: 	On leur fera la peau.
+
+Target prediction (greedy): On l'a encore beaucoup d'argent.
+
+Target prediction (beamed): 	On laissons que c'est familière.
+
+Source text from training: None of them wanted to talk.
+
+Target text from training: 	Aucune d'entre elles ne voulait discuter.
+
+Target prediction (greedy): Aucun d'entre eux ne sont pas venu.
+
+Target prediction (beamed): 	Aucun d'entre est nouveau ici.
+
+Source text from test: The dog sniffed her luggage.
+
+Target text from test: 	Le chien a reniflé ses bagages.
+
+Target prediction (greedy): Le chien rendu son travail.
+
+Target prediction (beamed): 	Le chien nous a commencé.
+
+Source text from test: She volunteered to help him.
+
+Target text from test: 	Elle s'est portée volontaire pour l'aider.
+
+Target prediction (greedy): Elle le conclua de nouvel en autre fois.
+
+Target prediction (beamed): 	Elle le conclua souvent du sucre.
+
+Source text from test: Why are you standing there?
+
+Target text from test: 	Pourquoi te tiens-tu là ?
+
+Target prediction (greedy): Pourquoi vous apprenez, tu as conclu ?
+
+Target prediction (beamed): 	Pourquoi vous apprenez-vous ?
+
+Number of samples: 7449
+Max sequence length for sources: 31
+Max sequence length for targets: 75
+Train on 5959 samples, validate on 1490 samples
+Epoch 1/100
+5959/5959 [==============================] - 232s 39ms/step - loss: 0.7771 - val_loss: 0.7644
+Epoch 2/100
+5959/5959 [==============================] - 232s 39ms/step - loss: 0.5857 - val_loss: 0.7452
+Epoch 3/100
+5959/5959 [==============================] - 232s 39ms/step - loss: 0.4733 - val_loss: 0.7391
+Epoch 4/100
+5959/5959 [==============================] - 232s 39ms/step - loss: 0.3901 - val_loss: 0.7416
+Epoch 00004: early stopping
+Source text from training: I can eat anything but onions.
+
+Target text from training: 	Je peux tout manger sauf les oignons.
+
+Target prediction (greedy): Je peux en passé au litre.
+
+Target prediction (beamed): 	Je peux être quelque chose sur quoi que ce soit.
+
+Source text from training: She clearly does not mean it.
+
+Target text from training: 	Elle ne le pense vraiment pas.
+
+Target prediction (greedy): Elle ne l'aime ne pas étudier.
+
+Target prediction (beamed): 	Elle ne l'aime pas toujours.
+
+Source text from training: Would you like to freshen up?
+
+Target text from training: 	Voudriez-vous vous rafraîchir ?
+
+Target prediction (greedy): Voudrais-tu venir immédiatement ?
+
+Target prediction (beamed): 	Voudrais-tu venir immédiatement ?
+
+Source text from test: I have nothing to say to you.
+
+Target text from test: 	Je n'ai rien à vous dire.
+
+Target prediction (greedy): Je n'ai rien de me dire.
+
+Target prediction (beamed): 	Je n'ai rien à faire.
+
+Source text from test: How did you get into my house?
+
+Target text from test: 	Comment êtes-vous entrée chez moi ?
+
+Target prediction (greedy): Comment es-tu entré à Tokyo ?
+
+Target prediction (beamed): 	Comment es-tu entré chez moi ?
+
+Source text from test: Playing the piano isn't easy.
+
+Target text from test: 	Jouer du piano n'est pas aisé.
+
+Target prediction (greedy): Dis-nous quelque chose s'est fialée, pas à perdre.
+
+Target prediction (beamed): 	S'il te plaît, n'est pas vrai.
+
+Number of samples: 7204
+Max sequence length for sources: 32
+Max sequence length for targets: 74
+Train on 5763 samples, validate on 1441 samples
+Epoch 1/100
+5763/5763 [==============================] - 224s 39ms/step - loss: 0.8060 - val_loss: 0.8361
+Epoch 2/100
+5763/5763 [==============================] - 224s 39ms/step - loss: 0.6137 - val_loss: 0.8455
+Epoch 00002: early stopping
+Source text from training: Can anyone pronounce this word?
+
+Target text from training: 	Quiconque sait-il prononcer ce mot ?
+
+Target prediction (greedy): Pout-om sortir la main avec la main en ce moment ?
+
+Target prediction (beamed): 	Est-ce que nous sommes coupé la main entre ?
+
+Source text from training: There are rats in the kitchen.
+
+Target text from training: 	Il y a des rats dans la cuisine.
+
+Target prediction (greedy): Il y a des couteilleurs solent le tien.
+
+Target prediction (beamed): 	Il y a beaucoup dans le soleil.
+
+Source text from training: Not everyone agrees with that.
+
+Target text from training: 	Tout le monde n'est pas d'accord avec ça.
+
+Target prediction (greedy): Tout le monde n'est pas aussi bou que le mienne.
+
+Target prediction (beamed): 	Tout le monde n'est pas aussi bou que le mienne.
+
+Source text from test: They strolled along the beach.
+
+Target text from test: 	Ils se promenèrent le long de la plage.
+
+Target prediction (greedy): Ils s'accordèrent le train de la foiture.
+
+Target prediction (beamed): 	Elles s'expliquèrent tout le monde.
+
+Source text from test: May all your dreams come true!
+
+Target text from test: 	Que tous tes rêves deviennent réalité !
+
+Target prediction (greedy): Mama me toutes-tu la main et couteul !
+
+Target prediction (beamed): 	Marie me trouves-tu la main avec un couteau ?
+
+Source text from test: Please loan me your dictionary.
+
+Target text from test: 	Prêtez-moi, s'il vous plaît, votre dictionnaire !
+
+Target prediction (greedy): Veuillez me rendre votre semaine et mais elle est coupable.
+
+Target prediction (beamed): 	S'il te plaît, s'il te plaît maintenant !
+
+Number of samples: 6911
+Max sequence length for sources: 34
+Max sequence length for targets: 73
+Train on 5528 samples, validate on 1383 samples
+Epoch 1/100
+5528/5528 [==============================] - 216s 39ms/step - loss: 0.7807 - val_loss: 0.7640
+Epoch 2/100
+5528/5528 [==============================] - 218s 39ms/step - loss: 0.6059 - val_loss: 0.7318
+Epoch 3/100
+5528/5528 [==============================] - 216s 39ms/step - loss: 0.4929 - val_loss: 0.7252
+Epoch 4/100
+5528/5528 [==============================] - 218s 39ms/step - loss: 0.4039 - val_loss: 0.7281
+Epoch 00004: early stopping
+Source text from training: Tom prefers whole-grain cereals.
+
+Target text from training: 	Tom préfère les céréales complètes.
+
+Target prediction (greedy): Tom préfère le français à l'esprit.
+
+Target prediction (beamed): 	Tom préfère le français à Boston.
+
+Source text from training: Why are you two always fighting?
+
+Target text from training: 	Pourquoi vous disputez-vous toujours, tous les deux ?
+
+Target prediction (greedy): Pourquoi vous êtes-vous toutes en train de te parler ?
+
+Target prediction (beamed): 	Pourquoi vous disputez-vous toujours ceci ?
+
+Source text from training: We don't have classes next week.
+
+Target text from training: 	Nous n'avons pas cours la semaine prochaine.
+
+Target prediction (greedy): Nous n'avons pas l'air très impressionné.
+
+Target prediction (beamed): 	Nous n'avons pas l'air très impressionné.
+
+Source text from test: Your parents know where you are.
+
+Target text from test: 	Vos parents savent où vous êtes.
+
+Target prediction (greedy): Votre permis t'apprend à ta là.
+
+Target prediction (beamed): 	Tes parents sont morts pour toi.
+
+Source text from test: We avoid talking about politics.
+
+Target text from test: 	On évite de parler politique.
+
+Target prediction (greedy): Nous avons extroit des problèmes.
+
+Target prediction (beamed): 	Nous avons parlé de parler anglais.
+
+Source text from test: Can you help look after the kids?
+
+Target text from test: 	Peux-tu aider à s'occuper des enfants ?
+
+Target prediction (greedy): Peux-tu me dire la voiture le plus proche ?
+
+Target prediction (beamed): 	Peux-tu décrire les clés ?
+
+Number of samples: 6609
+Max sequence length for sources: 35
+Max sequence length for targets: 81
+Train on 5287 samples, validate on 1322 samples
+Epoch 1/100
+5287/5287 [==============================] - 225s 42ms/step - loss: 0.7726 - val_loss: 0.7483
+Epoch 2/100
+5287/5287 [==============================] - 226s 43ms/step - loss: 0.5846 - val_loss: 0.7301
+Epoch 3/100
+5287/5287 [==============================] - 228s 43ms/step - loss: 0.4708 - val_loss: 0.7324
+Epoch 00003: early stopping
+Source text from training: You should make up your own mind.
+
+Target text from training: 	Vous devriez vous décider par vous-même !
+
+Target prediction (greedy): Tu devrais te mettre ton manteau.
+
+Target prediction (beamed): 	Vous devriez vous rencontrer mes excuses.
+
+Source text from training: I've had a lot on my mind lately.
+
+Target text from training: 	J'ai eu beaucoup de choses à l'esprit, ces derniers temps.
+
+Target prediction (greedy): J'ai besoin de mes problèmes avec moi des enfants.
+
+Target prediction (beamed): 	J'ai besoin de ton manteau dans la main.
+
+Source text from training: Unfortunately, that won't happen.
+
+Target text from training: 	Malheureusement, cela n'arrivera pas.
+
+Target prediction (greedy): Malheureusement, ce n'est pas vrai.
+
+Target prediction (beamed): 	Malheureusement, ce n'est pas vrai.
+
+Source text from test: I don't even know where to start.
+
+Target text from test: 	Je ne sais même pas par où commencer.
+
+Target prediction (greedy): Je ne sais jamais commencé à cette manière.
+
+Target prediction (beamed): 	Je ne sais jamais commencé à ceci.
+
+Source text from test: I don't believe what I'm hearing.
+
+Target text from test: 	Je n'en crois pas mes oreilles.
+
+Target prediction (greedy): Je ne suis pas sûr que je voulais dire.
+
+Target prediction (beamed): 	Je ne crois pas que je suis ici.
+
+Source text from test: I guess this still belongs to you.
+
+Target text from test: 	Je suppose que ceci t'appartient toujours ?
+
+Target prediction (greedy): Je suppose que ce sont d'autre que tu veux.
+
+Target prediction (beamed): 	Je suppose que ce sont d'autre que toi.
+
+Number of samples: 6395
+Max sequence length for sources: 37
+Max sequence length for targets: 78
+Train on 5116 samples, validate on 1279 samples
+Epoch 1/100
+5116/5116 [==============================] - 218s 43ms/step - loss: 0.8007 - val_loss: 0.7452
+Epoch 2/100
+5116/5116 [==============================] - 214s 42ms/step - loss: 0.6129 - val_loss: 0.7209
+Epoch 3/100
+5116/5116 [==============================] - 214s 42ms/step - loss: 0.4977 - val_loss: 0.7095
+Epoch 4/100
+5116/5116 [==============================] - 216s 42ms/step - loss: 0.4065 - val_loss: 0.7246
+Epoch 00004: early stopping
+Source text from training: Save it on the external hard drive.
+
+Target text from training: 	Enregistre-la sur le disque dur externe.
+
+Target prediction (greedy): Souvez l'argent de l'accident de cette fille.
+
+Target prediction (beamed): 	Souvez les choses comme ça !
+
+Source text from training: Cows are eating grass in the meadow.
+
+Target text from training: 	Les vaches mangent l'herbe du pâturage.
+
+Target prediction (greedy): Les vaches sont des mouches de l'argent.
+
+Target prediction (beamed): 	Les vaches sont dans le même train.
+
+Source text from training: I've never seen such a large whale.
+
+Target text from training: 	Je n'ai jamais vu une aussi grosse baleine.
+
+Target prediction (greedy): Je n'ai jamais vu une nuit heures de bonne chose.
+
+Target prediction (beamed): 	Je n'ai jamais vu une succès dans cette semaine.
+
+Source text from test: Tom is accustomed to long flights.
+
+Target text from test: 	Tom est habitué aux longs vols.
+
+Target prediction (greedy): Tom est en retard à l'école en public.
+
+Target prediction (beamed): 	Tom est conscient de sa proposition.
+
+Source text from test: Don't be scared of making mistakes.
+
+Target text from test: 	Tu n'as pas à avoir peur de faire des erreurs.
+
+Target prediction (greedy): N'ayez pas peur de rencontrer des gens nouveaux !
+
+Target prediction (beamed): 	N'ayez pas peur de rencontrer des gens nouveaux !
+
+Source text from test: She spoke to him about the matter.
+
+Target text from test: 	Elle lui parla de l'affaire.
+
+Target prediction (greedy): Elle lui a pris le sale sur le bureau.
+
+Target prediction (beamed): 	Elle lui a parlé de l'argent.
+
+Number of samples: 6108
+Max sequence length for sources: 38
+Max sequence length for targets: 80
+Train on 4886 samples, validate on 1222 samples
+Epoch 1/100
+4886/4886 [==============================] - 211s 43ms/step - loss: 0.8065 - val_loss: 0.7516
+Epoch 2/100
+4886/4886 [==============================] - 210s 43ms/step - loss: 0.6151 - val_loss: 0.7402
+Epoch 3/100
+4886/4886 [==============================] - 210s 43ms/step - loss: 0.5001 - val_loss: 0.7315
+Epoch 4/100
+4886/4886 [==============================] - 210s 43ms/step - loss: 0.4080 - val_loss: 0.7293
+Epoch 5/100
+4886/4886 [==============================] - 211s 43ms/step - loss: 0.3365 - val_loss: 0.7582
+Epoch 00005: early stopping
+Source text from training: I go grocery shopping every morning.
+
+Target text from training: 	Je vais faire les courses tous les matins.
+
+Target prediction (greedy): Je vais attendre pour Noël de retrouver un moment.
+
+Target prediction (beamed): 	Je vais attendre plus longtemps de l'argent.
+
+Source text from training: Doesn't it sometimes just get to you?
+
+Target text from training: 	Cela ne t'affecte-t-il simplement pas, parfois ?
+
+Target prediction (greedy): Cela ne vous a passé à payer de faire ?
+
+Target prediction (beamed): 	Cela ne vous apprécie toute ça ?
+
+Source text from training: She laughed at the sight of his hat.
+
+Target text from training: 	Elle a ri à la vue de son chapeau.
+
+Target prediction (greedy): Elle a participé le train de ce genre.
+
+Target prediction (beamed): 	Elle a répondu à ce qu'elle se regardait.
+
+Source text from test: Where shall we have breakfast today?
+
+Target text from test: 	Où prendrons-nous notre petit-déjeuner aujourd'hui ?
+
+Target prediction (greedy): Où petit-déjeunerons-nous un peu de pays ?
+
+Target prediction (beamed): 	Où petit-déjeunerons-nous aujourd'hui ?
+
+Source text from test: He selected a Christmas gift for her.
+
+Target text from test: 	Il a choisi un cadeau de Noël pour elle.
+
+Target prediction (greedy): Il est allé à un angertation du matin.
+
+Target prediction (beamed): 	Il est regardé par une chambre avec son frère.
+
+Source text from test: His explanation was not satisfactory.
+
+Target text from test: 	Son explication n'était pas satisfaisante.
+
+Target prediction (greedy): Son colégum ne devinra pas de soucier.
+
+Target prediction (beamed): 	Sa sœur est important pour nous.
+
+Number of samples: 5827
+Max sequence length for sources: 40
+Max sequence length for targets: 89
+Train on 4661 samples, validate on 1166 samples
+Epoch 1/100
+4661/4661 [==============================] - 218s 47ms/step - loss: 0.8111 - val_loss: 0.7764
+Epoch 2/100
+4661/4661 [==============================] - 218s 47ms/step - loss: 0.6034 - val_loss: 0.7484
+Epoch 3/100
+4661/4661 [==============================] - 219s 47ms/step - loss: 0.4804 - val_loss: 0.7567
+Epoch 00003: early stopping
+Source text from training: I didn't know that Tom was from Boston.
+
+Target text from training: 	J'ignorais que Tom était de Boston.
+
+Target prediction (greedy): J'ignorais que Tom et le feu s'est plainte.
+
+Target prediction (beamed): 	J'ignorais que Tom aimera la personne.
+
+Source text from training: There's nothing surprising about that.
+
+Target text from training: 	Il n'y a rien de surprenant à cela.
+
+Target prediction (greedy): Il n'y a rien de surprenant à cela.
+
+Target prediction (beamed): 	Il n'y a rien de surprenant à cela.
+
+Source text from training: Tom doesn't dress like everybody else.
+
+Target text from training: 	Tom ne s'habille pas comme tout le monde.
+
+Target prediction (greedy): Tom ne se rend pas toujours des vêtements avec tous.
+
+Target prediction (beamed): 	Tom ne se rend pas toujours les fleurs de Mary.
+
+Source text from test: He is planning to develop his business.
+
+Target text from test: 	Il prévoit de développer son affaire.
+
+Target prediction (greedy): Il dit souvent souvent de la crasse de conduire.
+
+Target prediction (beamed): 	Il s'est produit près de son concert.
+
+Source text from test: We set up the tent next to the river.
+
+Target text from test: 	Nous avons monté la tente près de la rivière.
+
+Target prediction (greedy): Nous sommes ici à la fête de la gare.
+
+Target prediction (beamed): 	Nous sommes rencontrés à la gare à la bibliothèque.
+
+Source text from test: The children ran toward the classroom.
+
+Target text from test: 	Les enfants courent vers la classe.
+
+Target prediction (greedy): Le contrat a embrassé la boîte de son apparence.
+
+Target prediction (beamed): 	Le conducteur s'est resté à la banque.
+
+Number of samples: 5549
+Max sequence length for sources: 42
+Max sequence length for targets: 91
+Train on 4439 samples, validate on 1110 samples
+Epoch 1/100
+4439/4439 [==============================] - 214s 48ms/step - loss: 0.8044 - val_loss: 0.7735
+Epoch 2/100
+4439/4439 [==============================] - 215s 48ms/step - loss: 0.6115 - val_loss: 0.7494
+Epoch 3/100
+4439/4439 [==============================] - 219s 49ms/step - loss: 0.4943 - val_loss: 0.7521
+Epoch 00003: early stopping
+Source text from training: Would you like to go on a trip together?
+
+Target text from training: 	Voudriez-vous partir en voyage ensemble ?
+
+Target prediction (greedy): Voudriez-vous aller voir un film, ce soir ?
+
+Target prediction (beamed): 	Voudriez-vous parler un peu plus tard ?
+
+Source text from training: It's not something I can decide quickly.
+
+Target text from training: 	Ce n'est pas quelque chose dont je peux décider rapidement.
+
+Target prediction (greedy): Ce n'est pas quelque chose d'un départ de se faire.
+
+Target prediction (beamed): 	Ce n'est pas quelque chose dont j'ai parlé.
+
+Source text from training: I can't play tennis as well as I used to.
+
+Target text from training: 	Je ne sais pas aussi bien jouer au tennis qu'avant.
+
+Target prediction (greedy): Je ne sais pas particulièrement de la maison pour son anniversaire.
+
+Target prediction (beamed): 	Je ne sais pas particulièrement avant que nous soyons avec un ami.
+
+Source text from test: I went to bed early because I was tired.
+
+Target text from test: 	Je suis allé me coucher tôt, car j'étais fatigué.
+
+Target prediction (greedy): Je me rendis à l'école à la maison pour que j'aie été arrivé.
+
+Target prediction (beamed): 	Je me rendis à l'école avant que nous avions une amie.
+
+Source text from test: Tom can come back here anytime he wants.
+
+Target text from test: 	Tom peut revenir ici quand il le souhaite.
+
+Target prediction (greedy): Tom peut sortir avec Marie pour laquelle et moi.
+
+Target prediction (beamed): 	Tom peut sortir au sujet de la maison.
+
+Source text from test: Won't you come to my house next Sunday?
+
+Target text from test: 	Vous ne viendrez pas chez moi dimanche prochain ?
+
+Target prediction (greedy): N'es-tu pas important que tu me rendes à l'étranger ?
+
+Target prediction (beamed): 	Ne voulez-vous pas me rendre à Boston ?
+
+Number of samples: 5294
+Max sequence length for sources: 45
+Max sequence length for targets: 97
+Train on 4235 samples, validate on 1059 samples
+Epoch 1/100
+4235/4235 [==============================] - 221s 52ms/step - loss: 0.8189 - val_loss: 0.8057
+Epoch 2/100
+4235/4235 [==============================] - 219s 52ms/step - loss: 0.6340 - val_loss: 0.8144
+Epoch 00002: early stopping
+Source text from training: I would like to repay him for his kindness.
+
+Target text from training: 	J'aimerais lui rendre la pareille pour sa gentillesse.
+
+Target prediction (greedy): J'aimerais prestr des choses de l'accident.
+
+Target prediction (beamed): 	J'aimerais rester à l'intérieur de l'accident.
+
+Source text from training: I was absent from school because I was sick.
+
+Target text from training: 	J'étais absente de l'école parce que j'étais malade.
+
+Target prediction (greedy): J'ai été accueil il y a aussi été de toi.
+
+Target prediction (beamed): 	J'ai été surpris par son anniversaire pour une nouvelle voiture.
+
+Source text from training: I'll be there at two o'clock without fail.
+
+Target text from training: 	J'y serais à deux heures sans faute.
+
+Target prediction (greedy): Je serai léché dernier sous soix de ne pas y aller.
+
+Target prediction (beamed): 	Je serai reste de lui de terminer seul.
+
+Source text from test: I was a fool for marrying someone like her.
+
+Target text from test: 	J'étais un idiot d'avoir épousé quelqu'un comme elle.
+
+Target prediction (greedy): J'étais juste de vous en prie de lui de parler.
+
+Target prediction (beamed): 	J'étais en train de presque tous les jours de lui.
+
+Source text from test: Did you forget to lock the door last night?
+
+Target text from test: 	Avez-vous oublié de verrouiller la porte hier soir ?
+
+Target prediction (greedy): Avez-vous regardé des propres yeux de la télévision ?
+
+Target prediction (beamed): 	Avez-vous payé quelques personnes à l'intérieur ?
+
+Source text from test: He left without so much as saying goodbye.
+
+Target text from test: 	Il partit sans même dire au revoir.
+
+Target prediction (greedy): Il a soumagé de nous avons regardé de lui de neige.
+
+Target prediction (beamed): 	Il avait des choses à l'intérieur de neige.
+
+Number of samples: 4948
+Max sequence length for sources: 48
+Max sequence length for targets: 99
+Train on 3958 samples, validate on 990 samples
+Epoch 1/100
+3958/3958 [==============================] - 210s 53ms/step - loss: 0.8422 - val_loss: 0.8012
+Epoch 2/100
+3958/3958 [==============================] - 212s 53ms/step - loss: 0.6688 - val_loss: 0.7816
+Epoch 3/100
+3958/3958 [==============================] - 210s 53ms/step - loss: 0.5540 - val_loss: 0.7813
+Epoch 4/100
+3958/3958 [==============================] - 210s 53ms/step - loss: 0.4608 - val_loss: 0.7924
+Epoch 00004: early stopping
+Source text from training: He must have stacked them up against the wall.
+
+Target text from training: 	Il a dû les entasser contre le mur.
+
+Target prediction (greedy): Il a dû les aliments sur le canapé.
+
+Target prediction (beamed): 	Il a dû les étudiants sur la table.
+
+Source text from training: From the moment he arrived, everything changed.
+
+Target text from training: 	Du moment où il est arrivé, tout a changé.
+
+Target prediction (greedy): D'était le plus grand que l'amitié, s'il vous plaît.
+
+Target prediction (beamed): 	Du moment où il est intéressant, tout.
+
+Source text from training: I don't even know if I want to do this anymore.
+
+Target text from training: 	Je ne sais même pas si je veux continuer à faire ceci.
+
+Target prediction (greedy): Je ne sais même pas si je l'aime.
+
+Target prediction (beamed): 	Je ne sais même pas si je l'aime.
+
+Source text from test: Tom has tried to commit suicide three times.
+
+Target text from test: 	Tom a tenté de se suicider trois fois.
+
+Target prediction (greedy): Tom a dû à Tom de consulter le bureau.
+
+Target prediction (beamed): 	Tom a essayé d'arrêter de prendre des photos.
+
+Source text from test: Mary will stop at nothing to achieve her goal.
+
+Target text from test: 	Marie n'épargnera rien pour atteindre son objectif.
+
+Target prediction (greedy): Mary a sans ses pas pour me rappeler le monde.
+
+Target prediction (beamed): 	Mary est toujours que les choses ne sont pas nécessaires.
+
+Source text from test: What I really want to do is to get some sleep.
+
+Target text from test: 	Ce que je veux vraiment, c'est prendre du repos.
+
+Target prediction (greedy): Ce que je veux faire en sorte que les choses se sont passées.
+
+Target prediction (beamed): 	Ce que je ferais vraiment faire ça nouvelle, je vous prie.
+
+Number of samples: 4590
+Max sequence length for sources: 52
+Max sequence length for targets: 115
+Train on 3672 samples, validate on 918 samples
+Epoch 1/100
+3672/3672 [==============================] - 221s 60ms/step - loss: 0.8608 - val_loss: 0.8312
+Epoch 2/100
+3672/3672 [==============================] - 222s 60ms/step - loss: 0.6710 - val_loss: 0.7961
+Epoch 3/100
+3672/3672 [==============================] - 221s 60ms/step - loss: 0.5533 - val_loss: 0.8070
+Epoch 00003: early stopping
+Source text from training: Now you've come of age, you have the right to vote.
+
+Target text from training: 	Maintenant que tu as atteint ta majorité, tu as le droit de vote.
+
+Target prediction (greedy): Maintenant que tu as déjà fait tes devoirs.
+
+Target prediction (beamed): 	Maintenant que vous avez déjà fait tes devoirs.
+
+Source text from training: Tom seems to be able to speak French fairly well.
+
+Target text from training: 	Tom semble pouvoir parler français plutôt bien.
+
+Target prediction (greedy): Tom semble être plutôt simple que ce problème soit actuellement.
+
+Target prediction (beamed): 	Tom semble être plutôt prudent de son anniversaire.
+
+Source text from training: She married him even though she didn't like him.
+
+Target text from training: 	Elle l'épousa, bien qu'elle ne l'appréciât pas.
+
+Target prediction (greedy): Elle l'a fait mais je ne suis pas là pour me dire à la maison.
+
+Target prediction (beamed): 	Elle lui a conseillé de nettoyer la neige qu'il vienne.
+
+Source text from test: They are hardly likely to come at this late hour.
+
+Target text from test: 	Il est très peu probable qu'ils viennent à cette heure tardive.
+
+Target prediction (greedy): Ils sont très partis pour le récupérer ce matin.
+
+Target prediction (beamed): 	Ils sont très intéges de sa part de faire ça.
+
+Source text from test: Is it true that you are going to study in London?
+
+Target text from test: 	Est-ce vrai que tu vas aller étudier à Londres ?
+
+Target prediction (greedy): Est-ce que tu as tenu pour faire les choses de notre temps ?
+
+Target prediction (beamed): 	Est-ce que tu viendrais vraiment que nous sommes en train de faire ?
+
+Source text from test: They announced that they were getting a divorce.
+
+Target text from test: 	Ils ont annoncé qu'ils allaient divorcer.
+
+Target prediction (greedy): Ils considèrent comme celui que nous pour avoir un accident.
+
+Target prediction (beamed): 	Ils considèrent compte que nous devions partir.
+
+Number of samples: 4187
+Max sequence length for sources: 58
+Max sequence length for targets: 129
+Train on 3349 samples, validate on 838 samples
+Epoch 1/100
+3349/3349 [==============================] - 226s 68ms/step - loss: 0.8787 - val_loss: 0.8468
+Epoch 2/100
+3349/3349 [==============================] - 227s 68ms/step - loss: 0.6962 - val_loss: 0.8286
+Epoch 3/100
+3349/3349 [==============================] - 231s 69ms/step - loss: 0.5820 - val_loss: 0.8163
+Epoch 4/100
+3349/3349 [==============================] - 228s 68ms/step - loss: 0.4890 - val_loss: 0.8248
+Epoch 00004: early stopping
+Source text from training: I'm extremely disappointed by the quality of the service.
+
+Target text from training: 	Je suis extrêmement déçu par la qualité du service.
+
+Target prediction (greedy): Je suis étudié par les autres par les autres de la rue en cadeaux.
+
+Target prediction (beamed): 	Je suis étudié par les autres par les autres par les autres.
+
+Source text from training: The recent frequency of earthquakes makes us nervous.
+
+Target text from training: 	La fréquence des tremblements de terre récemment nous rend nerveux.
+
+Target prediction (greedy): Le mariage a été en contact avec des larmes du monde.
+
+Target prediction (beamed): 	Le nombre de nombreuses personnes étaient couverts pour les autres.
+
+Source text from training: Tom told Mary that she shouldn't walk alone after dark.
+
+Target text from training: 	Tom a dit à Mary qu'elle ne devrait pas marcher seule après la tombée du jour.
+
+Target prediction (greedy): Tom a dit à Mary qu'il ne veut pas trouver le secteur prochain.
+
+Target prediction (beamed): 	Tom a dit à Mary qu'il ne veule pas travailler ensemble.
+
+Source text from test: I think it's time for me to put new bait on the hook.
+
+Target text from test: 	Je pense qu'il est temps que je mette un nouvel appât à l'hameçon.
+
+Target prediction (greedy): Je pense qu'il est temps pour moi de décider le livre à la maison.
+
+Target prediction (beamed): 	Je pense qu'il est temps pour moi de décider le livre à la maison.
+
+Source text from test: Why does he become drowsy whenever he begins to study?
+
+Target text from test: 	Pourquoi devient-il somnolent chaque fois qu'il se met à étudier ?
+
+Target prediction (greedy): Pourquoi est-ce la manière là de nourriture et que les autres chaussures sont restés ?
+
+Target prediction (beamed): 	Pourquoi est-ce la seule chose la plus belle que toutes les autres ?
+
+Source text from test: She knelt beside him and asked him what his name was.
+
+Target text from test: 	Elle s'est agenouillée à côté de lui et lui a demandé quel était son nom.
+
+Target prediction (greedy): Elle s'est endormi aussi bien qu'il a vu ce qu'ils veulent.
+
+Target prediction (beamed): 	Elle s'est endormi aussitôt qu'elle avait mangé avec lui.
+
+Number of samples: 3657
+Max sequence length for sources: 69
+Max sequence length for targets: 132
+Train on 2925 samples, validate on 732 samples
+Epoch 1/100
+2925/2925 [==============================] - 209s 72ms/step - loss: 0.9178 - val_loss: 0.8847
+Epoch 2/100
+2925/2925 [==============================] - 209s 72ms/step - loss: 0.7385 - val_loss: 0.8573
+Epoch 3/100
+2925/2925 [==============================] - 209s 72ms/step - loss: 0.6268 - val_loss: 0.8660
+Epoch 00003: early stopping
+Source text from training: If they'd taken their doctors' advice, they might not have died.
+
+Target text from training: 	Si elles avaient suivi les conseils de leurs médecins, elles ne seraient peut-être pas décédées.
+
+Target prediction (greedy): S'il avait pris la maison de la conférence à ce que le monde ne peut pas faire des choses.
+
+Target prediction (beamed): 	S'ils avaient décidé de l'argent, mais je ne pense pas que nous ne pouvons pas faire.
+
+Source text from training: There've been times when doing that has caused us problems.
+
+Target text from training: 	Il y a eu des fois où faire ça nous a causé des problèmes.
+
+Target prediction (greedy): Il y a eu de la semaine prochaine que le premier train parler.
+
+Target prediction (beamed): 	Il y a beaucoup de choses plus impressionnant qu'il est important.
+
+Source text from training: I'd like to study in China to improve the level of my Chinese.
+
+Target text from training: 	Je souhaite aller étudier en Chine afin d'améliorer mon niveau de chinois.
+
+Target prediction (greedy): J'aimerais discuter de me rendre à l'hôpital de l'argent à l'heure de la mort.
+
+Target prediction (beamed): 	J'aimerais rendre visite à l'hôpital tous les jours avec moi.
+
+Source text from test: You've got another four day's journey before you reach Moscow.
+
+Target text from test: 	Vous avez encore quatre jours de voyage avant d'arriver à Moscou.
+
+Target prediction (greedy): Tu as des deux problèmes avec qui vous êtes préparées.
+
+Target prediction (beamed): 	Vous avez des problèmes à votre famille pour te rendre visite.
+
+Source text from test: It's surprising that you haven't heard anything about her wedding.
+
+Target text from test: 	Il est surprenant que vous n'ayez rien entendu au sujet de ses noces.
+
+Target prediction (greedy): Il est surprenant que tu ne prends pas de ce qui va se passer.
+
+Target prediction (beamed): 	Il est surprenant que vous n'ayez rien entendu au sujet de ses parents.
+
+Source text from test: I don't care how much it costs. I'm going to buy it anyway.
+
+Target text from test: 	Je me moque de combien cela coûte, je vais l'acheter de toute manière.
+
+Target prediction (greedy): Je me fiche de comment ça m'a pris pour une petite fille.
+
+Target prediction (beamed): 	Je me fiche de comment faire quelque chose de très bien, je pense que nous arriverons.
+
+Number of samples: 1864
+Max sequence length for sources: 263
+Max sequence length for targets: 332
+Train on 1491 samples, validate on 373 samples
+Epoch 1/100
+1491/1491 [==============================] - 305s 204ms/step - loss: 1.0270 - val_loss: 1.0060
+Epoch 2/100
+1491/1491 [==============================] - 307s 206ms/step - loss: 0.8550 - val_loss: 0.9789
+Epoch 3/100
+1491/1491 [==============================] - 305s 205ms/step - loss: 0.7468 - val_loss: 0.9822
+Epoch 00003: early stopping
+Source text from training: Somebody told me that today's test was identical to the one we had last year.
+
+Target text from training: 	Quelqu'un m'a dit que le devoir surveillé d'aujourd'hui était identique à celui de l'année dernière.
+
+Target prediction (greedy): Quelqu'un m'a dit que le travail a démonté sa femme et les plus en plus de temps à parler de l'argent.
+
+Target prediction (beamed): 	Quelqu'un m'a demandé de lui donner de l'argent pour la première fois.
+
+Source text from training: Since there are rice paddies near my house, I often hear frogs croaking all night long this time of year.
+
+Target text from training: 	Comme il y a des rizières à côté de chez moi, j'entends souvent des grenouilles coasser toute la nuit, à cette époque de l'année.
+
+Target prediction (greedy): Comme il a rendu visite, j'ai eu un problème de terre avec mon père de se rendre à l'étranger.
+
+Target prediction (beamed): 	Comme cela devrait être en mesure de résoudre le problème mais je n'avais pas l'intention de rentrer dans le traduction.
+
+Source text from training: After English, German is the most popular foreign language in Russia.
+
+Target text from training: 	Après l'anglais, l'allemand est la langue la plus populaire en Russie.
+
+Target prediction (greedy): Après avoir des discussins, il y a des choses que le professeur pour devenir des gens qui ne peuvent pas te débarrasser de l'avocat.
+
+Target prediction (beamed): 	Après avoir rendu visite à cette dernière personnelle de son professeur pour traduire cette proposition.
+
+Source text from test: Since in this organization they're all chiefs and no Indians, it's a wonder any decisions get made.
+
+Target text from test: 	Vu que dans cette organisation, il n'y a que des chefs et pas d'indiens, c'est un miracle que quelque décision soit effectuée.
+
+Target prediction (greedy): Comme celui de l'autre est une personne entre le commerce de prendre de problèmes de production.
+
+Target prediction (beamed): 	Comme c'est très impressionnant que ce n'est pas très impressionnant que nous n'aurions jamais été en retard.
+
+Source text from test: A man with a watch knows what time it is, a man with two watches is never sure.
+
+Target text from test: 	Un homme avec une montre sait quelle heure il est, un homme avec deux montres n'en est jamais sûr.
+
+Target prediction (greedy): Une point et le temps de revenir de l'argent que je ne peux pas avoir l'air d'un travail pour les gens de parler de l'anglais.
+
+Target prediction (beamed): 	Une pierre de choses que nous avons dû faire quelque chose dont nous nous sommes rencontrés.
+
+Source text from test: I'm begging you. Don't make me laugh. I did too many sit-ups yesterday and my stomach muscles hurt.
+
+Target text from test: 	Je t'en supplie. Ne me fais pas rire. J'ai fait trop d'abdominaux hier et mes muscles ventraux me font mal.
+
+Target prediction (greedy): Je me demandai de ne pas avoir l'amour de ma famille avant de rentrer dans le monde.
+
+Target prediction (beamed): 	Je me demandai de ne pas avoir de temps avec vous, mais je ne pense pas quoi que ce soit trop tard.
+
+Saving model s2s.blstm320.beam.h5
+/home/xbert/unsortiert/arbeit/heyer/ocr-d/experiments-rnn/env3/lib/python3.6/site-packages/keras/engine/network.py:888: UserWarning: Layer lstm_5 was passed non-serializable keyword arguments: {'initial_state': [<tf.Tensor 'concatenate_1/concat:0' shape=(?, 640) dtype=float32>, <tf.Tensor 'concatenate_2/concat:0' shape=(?, 640) dtype=float32>]}. They will not be included in the serialized model (and thus will be missing at deserialization time).
+  '. They will not be included '
+/home/xbert/unsortiert/arbeit/heyer/ocr-d/experiments-rnn/env3/lib/python3.6/site-packages/keras/engine/network.py:888: UserWarning: Layer lstm_6 was passed non-serializable keyword arguments: {'initial_state': [<tf.Tensor 'lstm_2/while/Exit_2:0' shape=(?, 320) dtype=float32>, <tf.Tensor 'lstm_2/while/Exit_3:0' shape=(?, 320) dtype=float32>]}. They will not be included in the serialized model (and thus will be missing at deserialization time).
+  '. They will not be included '
+/home/xbert/unsortiert/arbeit/heyer/ocr-d/experiments-rnn/env3/lib/python3.6/site-packages/keras/engine/network.py:888: UserWarning: Layer lstm_7 was passed non-serializable keyword arguments: {'initial_state': [<tf.Tensor 'lstm_3/while/Exit_2:0' shape=(?, 320) dtype=float32>, <tf.Tensor 'lstm_3/while/Exit_3:0' shape=(?, 320) dtype=float32>]}. They will not be included in the serialized model (and thus will be missing at deserialization time).
+  '. They will not be included '
+/home/xbert/unsortiert/arbeit/heyer/ocr-d/experiments-rnn/env3/lib/python3.6/site-packages/keras/engine/network.py:888: UserWarning: Layer lstm_8 was passed non-serializable keyword arguments: {'initial_state': [<tf.Tensor 'lstm_4/while/Exit_2:0' shape=(?, 320) dtype=float32>, <tf.Tensor 'lstm_4/while/Exit_3:0' shape=(?, 320) dtype=float32>]}. They will not be included in the serialized model (and thus will be missing at deserialization time).
+  '. They will not be included '
+usage example:
+# for reading in decode_sequence_beam(encode_text(b'hello world!')):
+#     print(reading.decode('utf-8'))
