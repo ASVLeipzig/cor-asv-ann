@@ -1,27 +1,34 @@
 '''Sequence to sequence example in Keras (byte-level).
 
-Adapted from examples/lstm_seq2seq.py (tutorial by Francois Chollet 
-"A ten-minute introduction...") with changes as follows:
+Adapted from examples/lstm_seq2seq.py 
+(tutorial by Francois Chollet "A ten-minute introduction...") 
+with changes as follows:
 
+- use early stopping to prevent overfitting
+- use all data, sorted into increments by increasing window length
+- measure results not only on training set, but validation set as well
 - extended for use of full (large) dataset: training uses generator
   function (but not fit_generator because we want to have an automatic
-  validation split for early stopping in each increment)
-- use early stopping to prevent overfitting
-- show results not only on training set, but validation set as well
+  validation split for early stopping within in each increment)
 - preprocessing utilising Keras API: pad_sequences, to_categorical etc
-  (tokeniser not even necessary for byte strings)
+  (but tokeniser not even necessary for byte strings)
 - add end-of-sequence symbol to encoder input in training and inference
-- based on byte level instead of character level
-- padding needs to be taken into account by loss function: mask
-  samples using sample_weight
-- added preprocessing function for conveniently testing encoder
-- added bidirectional and 3 more unidirectional LSTM layers
-- added beam search decoding (which enforces utf-8 via incremental decoder)
-- added command line arguments
+- based on byte level instead of character level (unlimited vocab)
+- padding needs to be taken into account by loss function: 
+  mask padded samples using sample_weight zero
+- add preprocessing function for conveniently testing encoder
+- change first layer to bidirectional, add n more unidirectional LSTM layers
+  (n configurable)
+- add beam search decoding (which enforces utf-8 via incremental decoder)
+- add command line arguments
+- detect CPU vs GPU mode automatically
+- save/load weights separate from configuration (by recompiling model)
+  in order to share weights between CPU and GPU model, 
+  and between fixed and variable batchsize/length 
+- true evaluation (character/word error rates)
 
 Features still (very much) wanting of implementation:
 
-- true evaluation (character/word error rates)
 - attention
 - systematic hyperparameter treatment (deviations from Sutskever
   should be founded on empirical analysis): 
@@ -85,36 +92,72 @@ http://www.manythings.org/anki/
 '''
 from __future__ import print_function
 from os.path import isfile
+from os import environ, rename
 import sys
 import codecs
-
-# these should all be wrapped in functions
-from keras.models import Model, load_model
-from keras.layers import Input, LSTM, Bidirectional, Dense, concatenate
-from keras.callbacks import EarlyStopping
-from keras.optimizers import RMSprop, SGD
-from keras.preprocessing.text import Tokenizer
-from keras.preprocessing.sequence import pad_sequences
-from keras.utils import to_categorical
 import numpy as np
+# these should all be wrapped in functions:
+from editdistance import eval as edit_eval
+import pickle
 
-batch_size = 64  # Batch size for training.
-epochs = 100  # Maximum number of epochs to train for.
-latent_dim = 320  # Latent dimensionality of the encoding space.
-#num_trainsamples = 10000  # Number of samples to train on.
-data_path = 'fra-eng/fra.txt' # Path to the data txt file on disk.
-model_filename = 's2s.3lstm+blstm320.large.h5'
-if len(sys.argv) > 1:
-    model_filename = sys.argv[1]
-depth = 4 # number of encoder/decoder layers stacked above each other (only 1st layer will be BLSTM)
-if len(sys.argv) > 2:
-    depth = int(sys.argv[2])
-beam_width = 4 # keep track of how many alternative sequences during decode_sequence_beam()?
-if len(sys.argv) > 3:
-    beam_width = int(sys.argv[3])
-beam_width_out = 4 # up to how many results can be drawn from generator decode_sequence_beam()?
+# load pythonrc even with -i
+if 'PYTHONSTARTUP' in environ:
+    exec(open(environ['PYTHONSTARTUP']).read())
 
-# effort for CPU-only (4-core Ryzen 5 3.2 GHz) training (roughly constant throughout training set despite its increasing sequence lengths because generator draws chunks by storage size, not number of lines):
+# installing CUDA, cuDNN, Tensorflow with cuDNN support:
+# $ sudo add-apt-repository ppa:graphics-drivers/ppa
+# $ sudo apt-get update
+# $ sudo apt-get install nvidia-driver nvidia-cuda-toolkit libcupti-dev
+# $ git clone https://github.com/NVIDIA/cuda-samples.git && cd cuda-samples
+# nvcc does not work with v(gcc) > 5, and deb installation path has standard prefix:
+# $ sudo apt-get install gcc-5 g++-5
+# $ make CUDA_PATH=/usr HOST_COMPILER=g++-5 EXTRA_NVCCFLAGS="-L /usr/lib/x86_64-linux-gnu"
+# $ ./bin/x86_64/linux/release/deviceQuery
+#
+# ... https://docs.nvidia.com/deeplearning/sdk/cudnn-install/index.html#installcuda
+# Ubuntu 18.04 is still not supported, but we can use the 16.04 deb files libcudnn7{,-dev,-doc} 
+# so register as Nvidia developer, download cuDNN (https://developer.nvidia.com/rdp/cudnn-download)
+# important: cuDNN depends on specific CUDA toolkit versions (without explicit dependency)!
+# $ sudo dpkg -i libcudnn7-dev_7.1.4.18-1+cuda9.0_amd64.deb
+# $ sudo dpkg -i libcudnn7-dev-dev_7.1.4.18-1+cuda9.0_amd64.deb
+# $ sudo dpkg -i libcudnn7-doc-dev_7.1.4.18-1+cuda9.0_amd64.deb
+# $ cp -r /usr/src/cudnn_samples_v7/mnistCUDNN/ . && cd mnistCUDNN
+# $ make CUDA_PATH=/usr HOST_COMPILER=g++-5 EXTRA_NVCCFLAGS="-L /usr/lib/x86_64-linux-gnu"
+# $ ./mnistCUDNN
+#
+# Tensorflow-GPU (gemäß Anleitung zum Bauen aus den Quellen mit CUDA, https://www.tensorflow.org/install/install_sources,
+# aber die dortigen Angaben über LD_LIBRARY_PATH und dergl. müssen hier ignoriert werden):
+# ...
+# $ cd tensorflow; git checkout r1.8
+# $ ./configure
+# ... muß einmal für /usr/bin/python und einmal für /usr/bin/python3 gemacht werden;
+#     bei CUDA y antworten, Version 9.1 und Pfad /usr eingeben (werden falsch geraten),
+#     bei cuDNN 7 ebenfalls, Version 7.1 und Pfad /usr,
+#     Compute-capability 6.1 (für Quadro P1000 gemäß https://developer.nvidia.com/cuda-gpus)
+#     (wird ebenfalls falsch geraten)
+#     Als C-Compiler /usr/bin/x86_64-linux-gnu-gcc-5 (wird falsch geraten), da >5 nicht funktioniert
+#     (aber >5.4 funktioniert auch schon nicht, s.u.)
+# ... damit /usr überhaupt funktioniert, muß man third_party/gpus/cuda_configure.bzl patchen!
+# ... Außerdem scheint es einen Bug in GCC 5.5 zu geben (bei den intrinsischen Funktionen für AVX512-Befehlssatz):
+#     https://github.com/tensorflow/tensorflow/issues/10220#issuecomment-352110064
+#     Mit diesem Workaround läuft folgender Build dann durch:
+# $ bazel build --config=opt --config=cuda //tensorflow/tools/pip_package:build_pip_package
+# $ bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg
+# $ . env/bin/activate
+# $ pip install /tmp/tensorflow_pkg/tensorflow-1.8.0-cp27-cp27mu-linux_x86_64.whl
+# (oder pip install --ignore-installed --upgrade ...)
+# $ pip install pycudnn
+# $ deactivate
+# ...
+# $ . env3/bin/activate
+# $ pip install /tmp/tensorflow_pkg/tensorflow-1.8.0-cp36-cp36m-linux_x86_64.whl
+# $ pip install pycudnn
+# $ deactivate
+#
+
+# CuDNNLSTM // effort for GPU (Quadro P1000 5*128 CUDA cores 1.5 GHz 4 GB CUDA 9.1 CC 6.1):
+# * depth 4 with BLSTM ground layer on bytes with 320 hidden nodes per layer: ~39s per epoch
+# LSTM // effort for CPU-only (4-core Ryzen 5 3.2 GHz) training (roughly constant throughout training set despite its increasing sequence lengths because generator draws chunks by storage size, not number of lines):
 # * depth 1 LSTM on (selected) chars with 256 hidden nodes ~30s per epoch (does not converge on last sequences)
 # * depth 1 LSTM on bytes with 256 hidden nodes ~60s per epoch (does not converge on last sequences)
 # * depth 1 LSTM on bytes with 512 hidden nodes ~120-80s per epoch (does not converge on last sequences)
@@ -130,8 +173,8 @@ beam_width_out = 4 # up to how many results can be drawn from generator decode_s
 # degrades even on short sequences.
 # Since this 4-layer network with bidirectional base already has 5M parameters,
 # it should be large enough for the problem, despite the large distance between encoder
-# start and decoder stop. So most likely the 11MB dataset is too small to be representative
-# for character-level language modelling.
+# start and decoder stop. So most likely the 11MB fra-eng dataset is too small 
+# to be representative for character-level language modelling (esp. at longer lengths).
 
 # --->8--- from Keras FAQ: How can I obtain reproducible results using Keras during development?
 
@@ -177,365 +220,459 @@ beam_width_out = 4 # up to how many results can be drawn from generator decode_s
 
 # --->8---
 
-
-# Vectorize the data.
-
-# for char in source_text:
-#     if char not in source_characters:
-#         source_characters.add(char)
-# for char in target_text:
-#     if char not in target_characters:
-#         target_characters.add(char)
-#source_tokenizer = Tokenizer(char_level=True)
-#source_tokenizer.fit_on_texts(source_texts)
-#source_token_index = source_tokenizer.word_index
-#num_encoder_tokens = len(source_token_index) # tokenizer index starts with 1
-num_encoder_tokens = 255 # now utf8 bytes (non-nul, but including tab for start and newline for stop)
-
-#target_tokenizer = Tokenizer(char_level=True)
-#target_tokenizer.fit_on_texts(target_texts)
-#target_token_index = target_tokenizer.word_index
-#num_decoder_tokens = len(target_token_index) # tokenizer index starts with 1
-num_decoder_tokens = 255 # now utf8 bytes
-
-# source_characters = sorted(list(source_characters))
-# target_characters = sorted(list(target_characters))
-# num_encoder_tokens = len(source_characters)
-# num_decoder_tokens = len(target_characters)
-# source_token_index = dict(
-#     [(char, i) for i, char in enumerate(source_characters)])
-# target_token_index = dict(
-#     [(char, i) for i, char in enumerate(target_characters)])
-
-# encoder_input_data = np.zeros(
-#     (num_samples, max_encoder_seq_length, num_encoder_tokens),
-#     dtype='float32')
-# decoder_input_data = np.zeros(
-#     (num_samples, max_decoder_seq_length, num_decoder_tokens),
-#     dtype='float32')
-# decoder_output_data = np.zeros(
-#     (num_samples, max_decoder_seq_length, num_decoder_tokens),
-#     dtype='float32')
-
-# for i, (source_text, target_text) in enumerate(zip(source_texts, target_texts)):
-#     for t, char in enumerate(source_text):
-#         encoder_input_data[i, t, source_token_index[char]] = 1.
-#     for t, char in enumerate(target_text):
-#         # decoder_output_data is ahead of decoder_input_data by one timestep
-#         decoder_input_data[i, t, target_token_index[char]] = 1.
-#         if t > 0:
-#             # decoder_output_data will be ahead by one timestep
-#             # and will not include the start character.
-#             decoder_output_data[i, t - 1, target_token_index[char]] = 1.
-
-def gen_data(filename):
-    with open(filename, 'rb') as file:
-        while True:
-            lines = file.readlines(500000) # no more than 512 kB at once
-            if not lines and file.tell() > 0:
-                break
-            #     file.seek(0) # make sure the generator wraps around
-            #     gen_data(file)
-            source_texts = []
-            target_texts = []
-            for line in lines:
-                if not line: # empty
-                    continue
-                source_text, target_text = line.split(b'\t')
-                source_text = source_text + b'\n' # add end-of-sequence
-                target_text = b'\t' + target_text # add start-of-sequence (readlines already keeps newline as end-of-sequence)
-                source_texts.append(source_text)
-                target_texts.append(target_text)
-            max_encoder_seq_length = max([len(txt) for txt in source_texts])
-            max_decoder_seq_length = max([len(txt) for txt in target_texts])
-            num_samples = len(source_texts)
-            print('Number of samples:', num_samples)
-            #print('Number of unique source tokens:', num_encoder_tokens)
-            #print('Number of unique target tokens:', num_decoder_tokens)
-            print('Max sequence length for sources:', max_encoder_seq_length)
-            print('Max sequence length for targets:', max_decoder_seq_length)
-            
-            #encoder_input_sequences = source_tokenizer.texts_to_sequences(source_texts)
-            #decoder_input_sequences = target_tokenizer.texts_to_sequences(target_texts)
-            encoder_input_sequences = list(map(bytearray,source_texts))
-            decoder_input_sequences = list(map(bytearray,target_texts))
-            encoder_input_sequences = pad_sequences(encoder_input_sequences, maxlen=max_encoder_seq_length, padding='post')
-            decoder_input_sequences = pad_sequences(decoder_input_sequences, maxlen=max_decoder_seq_length, padding='post')
-            encoder_input_data = to_categorical(encoder_input_sequences, num_classes=num_encoder_tokens+1)
-            decoder_input_data = to_categorical(decoder_input_sequences, num_classes=num_decoder_tokens+1)
-            encoder_input_data = encoder_input_data[:,:,1:] # remove separate dimension for zero/padding
-            decoder_input_data = decoder_input_data[:,:,1:] # remove separate dimension for zero/padding
-            # teacher forcing:
-            decoder_output_data = np.roll(decoder_input_data,-1,axis=1) # output data will be ahead by 1 timestep
-            decoder_output_data[:,-1,:] = np.zeros(num_decoder_tokens) # delete+pad start token rolled in at the other end
-            
-            # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
-            decoder_output_weights = np.ones(decoder_input_sequences.shape, dtype=np.float32)
-            decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0.
-            
-            # shuffle within chunk so validation split does not get the longest sequences only
-            indices = np.arange(num_samples)
-            np.random.shuffle(indices)
-            encoder_input_data = encoder_input_data[indices]
-            decoder_input_data = decoder_input_data[indices]
-            decoder_output_data = decoder_output_data[indices]
-            decoder_output_weights = decoder_output_weights[indices]
-            
-            yield ([encoder_input_data, decoder_input_data], decoder_output_data, decoder_output_weights)
-
-
-### Define training mode model
-
-# Define an input sequence and process it.
-encoder_inputs = Input(shape=(None, num_encoder_tokens))
-if depth < 2:
-    encoder = Bidirectional(LSTM(latent_dim, return_state=True)) # dropout/recurrent_dropout does not seem to help (at least for small unidirectional encoder), go_backwards helps for unidirectional encoder with ~0.1 smaller loss on validation set (and not any slower) unless UTF-8 byte strings are used directly
-    encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = encoder(encoder_inputs)
-    # We discard `encoder_outputs` and only keep the states.
-    state_h = concatenate([fw_state_h, bw_state_h])
-    state_c = concatenate([fw_state_c, bw_state_c])
-    encoder_states = [state_h, state_c]
-else:
-    encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = Bidirectional(LSTM(latent_dim, return_sequences=True, return_state=True))(encoder_inputs)
-    state_h = concatenate([fw_state_h, bw_state_h])
-    state_c = concatenate([fw_state_c, bw_state_c])
-    encoder_states = [state_h, state_c]
-    for n in range(1,depth):
-        encoder_outputs, state_h, state_c = LSTM(latent_dim, return_sequences=(n < depth-1), return_state=True)(encoder_outputs)
-        encoder_states = encoder_states + [state_h, state_c]
-
-# Set up the decoder, using `encoder_states` as initial state.
-decoder_inputs = Input(shape=(None, num_decoder_tokens))
-# We set up our decoder to return full output sequences,
-# and to return internal states as well. We don't use the
-# return states in the training model, but we will use them in inference.
-decoder_lstm = LSTM(latent_dim*2, return_sequences=True, return_state=True)
-decoder_outputs, _, _ = decoder_lstm(decoder_inputs,
-                                     initial_state=encoder_states[0:2])
-if depth >= 2:
-    decoders_lstm = [decoder_lstm]
-    for n in range(1,depth):
-        decoders_lstm = decoders_lstm + [LSTM(latent_dim, return_sequences=True, return_state=True)]
-        decoder_outputs, _, _ = decoders_lstm[n](decoder_outputs,
-                                                 initial_state=encoder_states[2*n:2*n+2])
-decoder_dense = Dense(num_decoder_tokens, activation='softmax')
-decoder_outputs = decoder_dense(decoder_outputs)
-
-# Define the model that will turn
-# `encoder_input_data` & `decoder_input_data` into `decoder_output_data`
-model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-
-
-# Define inference mode model
-# Here's the drill:
-# 1) encode source and retrieve initial decoder state
-# 2) run one step of decoder with this initial state
-# and a "start of sequence" token as target.
-# Output will be the next target token
-# 3) Repeat from 2 with the current target token and current states
-
-# encoder can be re-used unchanged (but with result states as output)
-encoder_model = Model(encoder_inputs, encoder_states)
-# decoder must be re-defined
-decoder_state_input_h = Input(shape=(latent_dim*2,))
-decoder_state_input_c = Input(shape=(latent_dim*2,))
-decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
-decoder_outputs, state_h, state_c = decoder_lstm(
-    decoder_inputs, initial_state=decoder_states_inputs)
-decoder_states = [state_h, state_c]
-if depth >= 2:
-    for n in range(1,depth):
-        decoder_state_input_h = Input(shape=(latent_dim,))
-        decoder_state_input_c = Input(shape=(latent_dim,))
-        decoder_states_inputs = decoder_states_inputs + [decoder_state_input_h, decoder_state_input_c]
-        decoder_outputs, state_h, state_c = decoders_lstm[n](
-            decoder_outputs, initial_state=decoder_states_inputs[2*n:2*n+2])
-        decoder_states = decoder_states + [state_h, state_c]
-decoder_outputs = decoder_dense(decoder_outputs)
-decoder_model = Model(
-    [decoder_inputs] + decoder_states_inputs,
-    [decoder_outputs] + decoder_states)
-    
-# Reverse-lookup token index to decode sequences back to
-# something readable.
-#reverse_source_char_index = dict(
-#    (i, char) for char, i in source_token_index.items())
-#reverse_target_char_index = dict(
-#    (i, char) for char, i in target_token_index.items())
-
-def decode_sequence_beam(source_seq):
-    class Node(object):
-        def __init__(self, parent, state, value, cost, extras):
-            super(Node, self).__init__()
-            self.value = value # dimension index = byte - 1
-            self.parent = parent # parent Node, None for root
-            self.state = state # recurrent layer hidden state
-            self.cum_cost = parent.cum_cost + cost if parent else cost # e.g. -log(p) of sequence up to current node (including)
-            self.length = 1 if parent is None else parent.length + 1
-            self.extras = extras
-            self._sequence = None
+class Sequence2Sequence(object):
+    def __init__(self):
+        self.batch_size = 64  # How many samples are trained together? (batch length)
+        #self.window_size = 8 # How many bytes are encoded at once? (sequence length)
+        self.stateful = False # stateful encoder (implicit state transfer between batches) FIXME as soon as we have windows
+        self.width = 320  # latent dimensionality of the encoding space (hidden layers length)
+        self.depth = 4 # number of encoder/decoder layers stacked above each other (only 1st layer will be BLSTM)
+        self.epochs = 100  # maximum number of epochs to train for (unless stopping early)
+        self.beam_width = 4 # keep track of how many alternative sequences during decode_sequence_beam()?
+        self.beam_width_out = self.beam_width # up to how many results can be drawn from generator decode_sequence_beam()?
         
-        def to_sequence(self):
-            # Return sequence of nodes from root to current node.
-            if not self._sequence:
-                self._sequence = []
-                current_node = self
-                while current_node:
-                    self._sequence.insert(0, current_node)
-                    current_node = current_node.parent
-            return self._sequence
+        self.num_encoder_tokens = 255 # now utf8 bytes (non-nul, but including tab for start and newline for stop)
+        self.num_decoder_tokens = 255 # now utf8 bytes
         
-        def to_sequence_of_values(self):
-            return [s.value for s in self.to_sequence()]
+        self.encoder_decoder_model = None
+        self.encoder_model = None
+        self.decoder_model = None
+        
+        self.status = 0 # empty / configured / trained?
     
-    decoder = codecs.getincrementaldecoder('utf8')()
-    decoder.decode(b'\t')
-    next_fringe = [Node(parent=None,
-                        state=encoder_model.predict(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
-                        value=b'\t'[0]-1, # start symbol index
-                        cost=0.0,
-                        extras=decoder.getstate())]
-    hypotheses = []
     
-    # generator will raise StopIteration if hypotheses is still empty after loop
-    for l in range(300):
-        # try:
-        #     next(n for n in next_fringe if all(np.array_equal(x,y) for x,y in zip(nonbeam_states[:l+1], [s.state for s in n.to_sequence()])))
-        # except StopIteration:
-        #     print('greedy result falls off beam search at pos', l, nonbeam_seq[:l+1])
-        fringe = []
-        for n in next_fringe:
-            if n.value == b'\n'[0]-1: # end symbol index
-                hypotheses.append(n)
-                #print('found new solution', bytes([i+1 for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
+    def gen_data(self, filename):
+        from keras.preprocessing.sequence import pad_sequences
+        
+        with open(filename, 'rb') as file:
+            while True:
+                lines = file.readlines(500000) # no more than 512 kB at once
+                if not lines and file.tell() > 0:
+                    break
+                #     file.seek(0) # make sure the generator wraps around
+                #     gen_data(file)
+                source_texts = []
+                target_texts = []
+                for line in lines:
+                    if not line: # empty
+                        continue
+                    source_text, target_text = line.split(b'\t')
+                    source_text = source_text + b'\n' # add end-of-sequence
+                    target_text = b'\t' + target_text # add start-of-sequence (readlines already keeps newline as end-of-sequence)
+                    source_texts.append(source_text)
+                    target_texts.append(target_text)
+                max_encoder_seq_length = max([len(txt) for txt in source_texts])
+                max_decoder_seq_length = max([len(txt) for txt in target_texts])
+                num_samples = len(source_texts)
+                print('Number of samples:', num_samples)
+                print('Max sequence length for sources:', max_encoder_seq_length)
+                print('Max sequence length for targets:', max_decoder_seq_length)
+                
+                #encoder_input_sequences = source_tokenizer.texts_to_sequences(source_texts)
+                #decoder_input_sequences = target_tokenizer.texts_to_sequences(target_texts)
+                encoder_input_sequences = list(map(bytearray,source_texts))
+                decoder_input_sequences = list(map(bytearray,target_texts))
+                encoder_input_sequences = pad_sequences(encoder_input_sequences, maxlen=max_encoder_seq_length, padding='post')
+                decoder_input_sequences = pad_sequences(decoder_input_sequences, maxlen=max_decoder_seq_length, padding='post')
+                #encoder_input_data = to_categorical(encoder_input_sequences, num_classes=self.num_encoder_tokens+1)
+                #decoder_input_data = to_categorical(decoder_input_sequences, num_classes=self.num_decoder_tokens+1)
+                #encoder_input_data = encoder_input_data[:,:,1:] # remove separate dimension for zero/padding
+                #decoder_input_data = decoder_input_data[:,:,1:] # remove separate dimension for zero/padding
+                #encoder_input_data = np.array(encoder_input_sequences, dtype=np.uint8)
+                #decoder_input_data = np.array(decoder_input_sequences, dtype=np.uint8)
+                #decoder_output_data = np.eye(256, dtype=np.float32)[decoder_input_data,1:]
+                encoder_input_data = np.eye(256, dtype=np.float32)[encoder_input_sequences,1:]
+                decoder_input_data = np.eye(256, dtype=np.float32)[decoder_input_sequences,1:]
+                # teacher forcing:
+                decoder_output_data = np.roll(decoder_input_data,-1,axis=1) # output data will be ahead by 1 timestep
+                decoder_output_data[:,-1,:] = np.zeros(self.num_decoder_tokens) # delete+pad start token rolled in at the other end
+                
+                # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
+                decoder_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
+                decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0.
+                
+                # shuffle within chunk so validation split does not get the longest sequences only
+                indices = np.arange(num_samples)
+                np.random.shuffle(indices)
+                encoder_input_data = encoder_input_data[indices]
+                decoder_input_data = decoder_input_data[indices]
+                decoder_output_data = decoder_output_data[indices]
+                decoder_output_weights = decoder_output_weights[indices]
+                
+                yield ([encoder_input_data, decoder_input_data], decoder_output_data, decoder_output_weights)
+    
+    def configure(self):
+        from keras.layers import Input, Dense, TimeDistributed
+        from keras.layers import LSTM, CuDNNLSTM, Bidirectional, concatenate
+        from keras.models import Model
+        from keras import backend as K
+        
+        # automatically switch to CuDNNLSTM if CUDA GPU is available:
+        has_cuda = K.backend() == 'tensorflow' and K.tensorflow_backend._get_available_gpus()
+        print('using', 'GPU' if has_cuda else 'CPU', 'LSTM implementation to compile',
+              'stateful' if self.stateful else 'stateless', 
+              'model of depth', self.depth, 'width', self.width)
+        lstm = CuDNNLSTM if has_cuda else LSTM
+        
+        ### Define training phase model
+        
+        # Set up an input sequence and process it.
+        encoder_inputs = Input(shape=(None, self.num_encoder_tokens))
+        # Set up the encoder. We will discard encoder_outputs and only keep encoder_state_outputs.
+        #dropout/recurrent_dropout does not seem to help (at least for small unidirectional encoder), go_backwards helps for unidirectional encoder with ~0.1 smaller loss on validation set (and not any slower) unless UTF-8 byte strings are used directly
+        encoder_state_outputs = []
+        for n in range(self.depth):
+            args = {'return_state': True, 'return_sequences': (n < self.depth-1)}
+            if not has_cuda:
+                args['recurrent_activation'] = 'sigmoid' # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM
+            layer = lstm(self.width, **args)
+            if n == 0:
+                encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = Bidirectional(layer)(encoder_inputs)
+                state_h = concatenate([fw_state_h, bw_state_h])
+                state_c = concatenate([fw_state_c, bw_state_c])
             else:
-                fringe.append(n)
-                #print('added new hypothesis', bytes([i+1 for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
-        if not fringe or len(hypotheses) >= beam_width_out:
-            break
+                encoder_outputs, state_h, state_c = layer(encoder_outputs)
+            encoder_state_outputs.extend([state_h, state_c])
         
-        # use fringe leaves as minibatch, but with only 1 timestep
-        target_seq = np.expand_dims(np.eye(256, dtype=np.float32)[[n.value+1 for n in fringe],1:], axis=1) # add time dimension
-        states_val = [np.vstack([n.state[layer] for n in fringe]) for layer in range(len(fringe[0].state))] # stack layers across batch
-        output = decoder_model.predict([target_seq] + states_val)
-        scores_output = output[0][:,-1] # only last timestep
-        scores_output_best = np.argsort(scores_output, axis=1)[:,-beam_width:] # still in reverse sort order
-        states_output = list(output[1:]) # from (layers) tuple
-        
-        next_fringe = []
-        for i, n in enumerate(fringe): # iterate over batch (1st dim)
-            scores = scores_output[i,:]
-            scores_best = scores_output_best[i,:]
-            states = [layer[i:i+1] for layer in states_output] # unstack layers for current sample
-            logscores = -np.log(scores[scores_best])
-            for best, logscore in zip(scores_best, logscores): # follow up on beam_width best predictions
-                decoder.setstate(n.extras)
-                try:
-                    decoder.decode(bytes([best+1]))
-                    n_new = Node(parent=n, state=states, value=best, cost=logscore, extras=decoder.getstate())
-                    next_fringe.append(n_new)
-                except UnicodeDecodeError:
-                    pass # ignore this alternative
-        next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:beam_width]
-    
-    hypotheses.sort(key=lambda n: n.cum_cost)
-    for hypothesis in hypotheses[:beam_width_out]:
-        indices = hypothesis.to_sequence_of_values()
-        byteseq = bytes([i+1 for i in indices])
-        yield byteseq
+        # Set up an input sequence and process it.
+        decoder_inputs = Input(shape=(None, self.num_decoder_tokens))
+        # Set up decoder to return full output sequences (so we can train in parallel),
+        # to use encoder_state_outputs as initial state and return final states as well. 
+        # We don't use those states in the training model, but we will use them 
+        # for inference (see further below). 
+        decoder_lstms = []
+        for n in range(self.depth):
+            args = {'return_state': True, 'return_sequences': True}
+            if not has_cuda:
+                args['recurrent_activation'] = 'sigmoid' # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM
+            layer = lstm(self.width*2 if n == 0 else self.width, **args)
+            decoder_lstms.append(layer)
+            decoder_outputs, _, _ = layer(decoder_inputs if n == 0 else decoder_outputs, 
+                                          initial_state=encoder_state_outputs[2*n:2*n+2])
+        decoder_dense = TimeDistributed(Dense(self.num_decoder_tokens, activation='softmax'))
+        decoder_outputs = decoder_dense(decoder_outputs)
 
-def decode_sequence_greedy(source_seq):
-    # Encode the source as state vectors.
-    states_value = encoder_model.predict(np.expand_dims(source_seq, axis=0))
+        # Bundle the model that will turn
+        # `encoder_input_data` and `decoder_input_data` into `decoder_output_data`
+        self.encoder_decoder_model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+        
+        ## Define inference phase model
+        # Here's the drill:
+        # 1) encode source to retrieve initial decoder state
+        # 2) run one step of decoder with this initial state
+        #    and a "start of sequence" as target token.
+        # 3) repeat from 2, feeding back the target token 
+        #    from output to input, and passing state
+        
+        # Re-use the training phase encoder unchanged 
+        # (with result states as output).
+        self.encoder_model = Model(encoder_inputs, encoder_state_outputs)
+        
+        # Set up decoder differently: with additional input
+        # as initial state (not just encoder_state_outputs), and
+        # keeping final states (instead of discarding), 
+        # so we can pass states explicitly.
+        decoder_state_inputs = []
+        decoder_state_outputs = []
+        for n in range(self.depth):
+            state_h_in = Input(shape=(self.width*2 if n == 0 else self.width,))
+            state_c_in = Input(shape=(self.width*2 if n == 0 else self.width,))
+            decoder_state_inputs.extend([state_h_in, state_c_in])
+            layer = decoder_lstms[n]
+            decoder_outputs, state_h_out, state_c_out = layer(decoder_inputs if n == 0 else decoder_outputs, 
+                                                              initial_state=decoder_state_inputs[2*n:2*n+2])
+            decoder_state_outputs.extend([state_h_out, state_c_out])
+        decoder_outputs = decoder_dense(decoder_outputs)
+        self.decoder_model = Model(
+            [decoder_inputs] + decoder_state_inputs,
+            [decoder_outputs] + decoder_state_outputs)
+        
+        ## Compile model
+        self.encoder_decoder_model.compile(loss='categorical_crossentropy',
+                                           optimizer='rmsprop',
+                                           sample_weight_mode='temporal') # sample_weight slows down slightly (20%)
+        
+        self.status = 1
     
-    # Generate empty target sequence of length 1.
-    target_seq = np.zeros((1, 1, num_decoder_tokens))
-    # Populate the first character of target sequence with the start character.
-    #target_seq[0, 0, target_token_index['\t']-1] = 1.
-    target_seq[0, 0, b'\t'[0]-1] = 1.
+    def train(self, filename):
+        from keras.callbacks import EarlyStopping, ModelCheckpoint
+        
+        # Run training
+        callbacks = [EarlyStopping(monitor='val_loss', patience=1, verbose=1, mode='min'),
+                     ModelCheckpoint('s2s_last.h5', monitor='val_loss', # to be able to replay long epochs (crash/overfitting)
+                                     save_best_only=True, save_weights_only=True, mode='min')]
+        
+        # lines in this file are sorted by sequence length!
+        # instead of fit_generator (which precludes automatic validation_split):
+        for (input, output, sample_weight) in self.gen_data(filename): # get one increment of data
+            self.encoder_decoder_model.fit(input, output,
+                                           sample_weight=sample_weight,
+                                           batch_size=self.batch_size,
+                                           epochs=self.epochs,
+                                           callbacks=callbacks,
+                                           validation_split=0.2)
+            
+            n = input[0].shape[0]
+            for i in list(range(0,3))+list(range(n-3,n)):
+                # Take one sequence (part of the training/validation set) and try decoding it
+                source_seq = input[0][i]
+                target_seq = input[1][i]
+                source_line = (source_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+                target_line = (target_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+                decoded_line = self.decode_sequence_greedy(source_seq)
+                beamdecoded_line = next(self.decode_sequence_beam(source_seq)) # query only 1-best
+                print('Sample',i,)
+                print('Source input  from', 'training:' if i<n*0.8 else 'test:    ', source_line.strip().decode("utf-8", "strict"))
+                print('Target output from', 'training:' if i<n*0.8 else 'test:    ', target_line.strip().decode("utf-8", "strict"))
+                print('Target prediction (greedy): ', decoded_line.strip().decode("utf-8", "ignore"))
+                print('Target prediction (beamed): ', beamdecoded_line.strip().decode("utf-8", "strict"))
+        
+        self.state = 2
     
-    # Sampling loop for a batch of sequences
-    # (to simplify, here we assume a batch of size 1).
-    stop_condition = False
-    decoded_sentence = b''
-    while not stop_condition:
-        output = decoder_model.predict(
-            [target_seq] + states_value)
-        output_tokens = output[0]
-        output_states = output[1:]
-        
-        # Sample a token
-        sampled_token_index = np.argmax(output_tokens[0, -1, :])
-        #sampled_char = reverse_target_char_index[sampled_token_index+1]
-        sampled_char = bytes([sampled_token_index+1])
-        decoded_sentence += sampled_char
-        
-        # Exit condition: either hit max length
-        # or find stop character.
-        if (sampled_char == b'\n' or
-            len(decoded_sentence) > 400):
-            stop_condition = True
-        
-        # Update the target sequence (of length 1).
-        target_seq = np.zeros((1, 1, num_decoder_tokens))
-        target_seq[0, 0, sampled_token_index] = 1.
-        # feeding back the softmax vector directly vastly deteriorates predictions (because only identity vectors are presented during training)
-        # but we should add beam search (keep n best overall paths, add k best predictions here)
-        
-        # Update states
-        states_value = list(output_states)
+    def load_config(self, filename):
+        config = pickle.load(open(filename, mode='rb'))
+        self.width = config['width']
+        self.depth = config['depth']
+        self.stateful = config['stateful']
     
-    return decoded_sentence
+    def save_config(self, filename):
+        assert self.status > 0 # already compiled
+        config = {'width': self.width, 'depth': self.depth, 'stateful': self.stateful}
+        pickle.dump(config, open(filename, mode='wb'))
+    
+    def load_weights(self, filename):
+        assert self.status > 0 # already compiled
+        self.encoder_decoder_model.load_weights(filename)
+        self.status = 2
+    
+    def save_weights(self, filename):
+        assert self.status > 1 # already trained
+        self.encoder_decoder_model.save_weights(filename)
+    
+    def decode_sequence_greedy(self, source_seq):
+        # Encode the source as state vectors.
+        states_value = self.encoder_model.predict(np.expand_dims(source_seq, axis=0))
+        
+        # Generate empty target sequence of length 1.
+        target_seq = np.zeros((1, 1, self.num_decoder_tokens))
+        #target_seq = np.zeros((1, 1))
+        # Populate the first character of target sequence with the start character.
+        #target_seq[0, 0, target_token_index['\t']-1] = 1.
+        target_seq[0, 0, b'\t'[0]-1] = 1.
+        #target_seq[0, 0] = b'\t'[0]
+        
+        # Sampling loop for a batch of sequences
+        # (to simplify, here we assume a batch of size 1).
+        stop_condition = False
+        decoded_sentence = b''
+        while not stop_condition:
+            output = self.decoder_model.predict_on_batch([target_seq] + states_value)
+            output_scores = output[0]
+            output_states = output[1:]
+            
+            # Sample a token
+            sampled_token_index = np.argmax(output_scores[0, -1, :])
+            #sampled_char = reverse_target_char_index[sampled_token_index+1]
+            sampled_char = bytes([sampled_token_index+1])
+            decoded_sentence += sampled_char
+            
+            # Exit condition: either hit max length
+            # or find stop character.
+            if (sampled_char == b'\n' or
+                len(decoded_sentence) > 400):
+                stop_condition = True
+            
+            # Update the target sequence (of length 1).
+            target_seq = np.zeros((1, 1, self.num_decoder_tokens))
+            #target_seq = np.zeros((1, 1))
+            target_seq[0, 0, sampled_token_index] = 1.
+            #target_seq[0, 0] = sampled_token_index+1
+            # feeding back the softmax vector directly vastly deteriorates predictions (because only identity vectors are presented during training)
+            # but we should add beam search (keep n best overall paths, add k best predictions here)
+            
+            # Update states
+            states_value = list(output_states)
+        
+        return decoded_sentence
+    
+    def decode_sequence_beam(self, source_seq):
+        decoder = codecs.getincrementaldecoder('utf8')()
+        decoder.decode(b'\t')
+        next_fringe = [Node(parent=None,
+                            state=self.encoder_model.predict(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
+                            value=b'\t'[0], # start symbol byte
+                            cost=0.0,
+                            extras=decoder.getstate())]
+        hypotheses = []
+        
+        # generator will raise StopIteration if hypotheses is still empty after loop
+        for l in range(300):
+            # try:
+            #     next(n for n in next_fringe if all(np.array_equal(x,y) for x,y in zip(nonbeam_states[:l+1], [s.state for s in n.to_sequence()])))
+            # except StopIteration:
+            #     print('greedy result falls off beam search at pos', l, nonbeam_seq[:l+1])
+            fringe = []
+            for n in next_fringe:
+                if n.value == b'\n'[0]: # end symbol byte
+                    hypotheses.append(n)
+                    #print('found new solution', bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
+                else:
+                    fringe.append(n)
+                    #print('added new hypothesis', bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
+            if not fringe or len(hypotheses) >= self.beam_width_out:
+                break
+            
+            # use fringe leaves as minibatch, but with only 1 timestep
+            target_seq = np.expand_dims(np.eye(256, dtype=np.float32)[[n.value for n in fringe], 1:], axis=1) # add time dimension
+            states_val = [np.vstack([n.state[layer] for n in fringe]) for layer in range(len(fringe[0].state))] # stack layers across batch
+            output = self.decoder_model.predict_on_batch([target_seq] + states_val)
+            scores_output = output[0][:,-1] # only last timestep
+            scores_output_best = np.argsort(scores_output, axis=1)[:,-self.beam_width:] # still in reverse sort order
+            states_output = list(output[1:]) # from (layers) tuple
+            
+            next_fringe = []
+            for i, n in enumerate(fringe): # iterate over batch (1st dim)
+                scores = scores_output[i,:]
+                scores_best = scores_output_best[i,:]
+                states = [layer[i:i+1] for layer in states_output] # unstack layers for current sample
+                logscores = -np.log(scores[scores_best])
+                for best, logscore in zip(scores_best, logscores): # follow up on beam_width best predictions
+                    decoder.setstate(n.extras)
+                    try:
+                        decoder.decode(bytes([best+1]))
+                        n_new = Node(parent=n, state=states, value=best+1, cost=logscore, extras=decoder.getstate())
+                        next_fringe.append(n_new)
+                    except UnicodeDecodeError:
+                        pass # ignore this alternative
+            next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:self.beam_width]
+        
+        hypotheses.sort(key=lambda n: n.cum_cost)
+        for hypothesis in hypotheses[:self.beam_width_out]:
+            indices = hypothesis.to_sequence_of_values()
+            byteseq = bytes([i for i in indices])
+            yield byteseq
+    
+
+class Node(object):
+    def __init__(self, parent, state, value, cost, extras):
+        super(Node, self).__init__()
+        self.value = value # byte
+        self.parent = parent # parent Node, None for root
+        self.state = state # recurrent layer hidden state
+        self.cum_cost = parent.cum_cost + cost if parent else cost # e.g. -log(p) of sequence up to current node (including)
+        self.length = 1 if parent is None else parent.length + 1
+        self.extras = extras
+        self._sequence = None
+    
+    def to_sequence(self):
+        # Return sequence of nodes from root to current node.
+        if not self._sequence:
+            self._sequence = []
+            current_node = self
+            while current_node:
+                self._sequence.insert(0, current_node)
+                current_node = current_node.parent
+        return self._sequence
+    
+    def to_sequence_of_values(self):
+        return [s.value for s in self.to_sequence()]
 
 
-if isfile(model_filename):
-    print('Loading model', model_filename)
-    model = load_model(model_filename)
+s2s = Sequence2Sequence()
+
+data_path = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.augmented.txt' # training and validation set csv
+data_path2 = '../../daten/dta19-reduced/testdata.Fraktur4-gt.filtered.txt' # test set csv
+
+model_filename = 's2s.Fraktur4.d%d.w%04d.h5' % (s2s.depth, s2s.width)
+if len(sys.argv) > 1:
+    model_filename = sys.argv[1]
+config_filename = model_filename.rstrip('.h5') + '.pkl'
+if len(sys.argv) > 2:
+    s2s.beam_width = int(sys.argv[2])
+    s2s.beam_width_out = s2s.beam_width
+
+if isfile(config_filename) and isfile(model_filename):
+    print('Loading model', model_filename, config_filename)
+    #model = s2s.encoder_decoder_model.load_model(model_filename)
+    s2s.load_config(config_filename)
+    s2s.configure()
+    s2s.load_weights(model_filename)
 else:
-    # Run training
-    early_stopping = EarlyStopping(monitor='val_loss', patience=1, verbose=1, mode='min')
-    model.compile(loss='categorical_crossentropy',
-                  optimizer='rmsprop',
-                  sample_weight_mode='temporal') # sample_weight slows down slightly (20%)
-
-    # lines in this file are sorted by sequence length!
-    # instead of fit_generator:
-    for (input, output, sample_weight) in gen_data(data_path):
-        model.fit(input, output,
-                  batch_size=batch_size,
-                  epochs=epochs,
-                  callbacks=[early_stopping],
-                  sample_weight=sample_weight,
-                  validation_split=0.2)
-
-        n = input[0].shape[0]
-        for i in list(range(0,3))+list(range(n-3,n)):
-            # Take one sequence (part of the training/validation set) and try decoding it
-            source_seq = input[0][i]
-            decoded_sentence = decode_sequence_greedy(source_seq)
-            beamdecoded_sentence = next(decode_sequence_beam(source_seq)) # query only 1-best
-            print('Source text from', 'training:' if i<n*0.8 else 'test:', (input[0][i].nonzero()[1]+1).astype(np.uint8).tobytes().decode("utf-8", "strict"))
-            print('Target text from', 'training:' if i<n*0.8 else 'test:', (input[1][i].nonzero()[1]+1).astype(np.uint8).tobytes().decode("utf-8", "strict"))
-            print('Target prediction (greedy):', decoded_sentence.decode("utf-8", "ignore"))
-            print('Target prediction (beamed):', beamdecoded_sentence.decode("utf-8", "strict"))            
-
+    s2s.configure()
+    s2s.train(data_path)
+    
     # Save model
-    print('Saving model', model_filename)
-    model.save(model_filename) # FIXME: when this throws a UserWarning that 'initial_state_ is a non-serializable keyword argument for the the tensorflow tensor, then the model will be useless -- it will load successfully but produce wrong results
+    print('Saving model', model_filename, config_filename)
+    s2s.save_config(config_filename)
+    if isfile('s2s_last.h5'):
+        rename('s2s_last.h5', model_filename)
+    else:
+        s2s.save_weights(model_filename)
+
 
 #with open(other_path, 'rb') as f:
-#    loss = model.evaluate_generator(gen_data(f), workers=4, verbose=1)
-#print('Test loss:', loss)
+#    loss = s2s.encoder_decoder_model.evaluate_generator(gen_data(f), workers=4, verbose=1)
+#    print('Test loss:', loss)
+#would be greedy:
+#output = s2s.encoder_decoder_model.predict_on_generator(gen_data(data_path2))
+c_total = 0
+c_edits_ocr = 0
+c_edits_greedy = 0
+c_edits_beamed = 0
+w_total = 0
+w_edits_ocr = 0
+w_edits_greedy = 0
+w_edits_beamed = 0
+for (input, output, sample_weight) in s2s.gen_data(data_path2):
+    n = input[0].shape[0]
+    for i in range(n):
+        # Take one sequence (part of the test set) and try decoding it
+        source_seq = input[0][i]
+        target_seq = input[1][i]
+        source_line = (source_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+        target_line = (target_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+        decoded_text = s2s.decode_sequence_greedy(source_seq).strip().decode("utf-8", "ignore")
+        beamdecoded_text = next(s2s.decode_sequence_beam(source_seq)).strip().decode("utf-8", "strict") # query only 1-best
+        source_text = source_line.strip().decode("utf-8", "strict")
+        target_text = target_line.strip().decode("utf-8", "strict")
+        
+        edits = edit_eval(source_text,target_text)
+        c_edits_ocr += edits
+        c_total += len(target_text)
+        edits = edit_eval(decoded_text,target_text)
+        c_edits_greedy += edits
+        edits = edit_eval(beamdecoded_text,target_text)
+        c_edits_beamed += edits
+        
+        decoded_tokens = decoded_text.split(" ")
+        beamdecoded_tokens = beamdecoded_text.split(" ")
+        source_tokens = source_text.split(" ")
+        target_tokens = target_text.split(" ")
+        
+        edits = edit_eval(source_tokens,target_tokens)
+        w_edits_ocr += edits
+        w_total += len(target_tokens)
+        edits = edit_eval(decoded_tokens,target_tokens)
+        w_edits_greedy += edits
+        edits = edit_eval(beamdecoded_tokens,target_tokens)
+        w_edits_beamed += edits
 
+print("CER OCR: {}".format(c_edits_ocr / c_total))
+print("CER greedy: {}".format(c_edits_greedy / c_total))
+print("CER beamed: {}".format(c_edits_beamed / c_total))
+print("WER OCR: {}".format(w_edits_ocr / w_total))
+print("WER greedy: {}".format(w_edits_greedy / w_total))
+print("WER beamed: {}".format(w_edits_beamed / w_total))
 
 def encode_text(source_text):
-    # source_sequence = np.zeros((1, max_encoder_seq_length, num_encoder_tokens), dtype='float32')
+    # source_sequence = np.zeros((1, max_encoder_seq_length, s2s.num_encoder_tokens), dtype='float32')
     # for t, char in enumerate(source_text):
     #     source_sequence[0, t, source_token_index[char]] = 1
     # return source_sequence
-    #return to_categorical(pad_sequences(source_tokenizer.texts_to_sequences([source_text]), maxlen=max_encoder_seq_length, padding='pre'), num_classes=num_encoder_tokens+1)[:,:,1:] # remove separate dimension for zero/padding
-    #return to_categorical(pad_sequences([list(map(bytearray,source_text))], maxlen=max_encoder_seq_length, padding='pre'), num_classes=num_encoder_tokens+1)[:,:,1:] # remove separate dimension for zero/padding
-    #return to_categorical(list(map(bytearray,[source_text + b'\n'])), num_classes=num_encoder_tokens+1)[:,:,1:]
+    #return to_categorical(pad_sequences(source_tokenizer.texts_to_sequences([source_text]), maxlen=max_encoder_seq_length, padding='pre'), num_classes=s2s.num_encoder_tokens+1)[:,:,1:] # remove separate dimension for zero/padding
+    #return to_categorical(pad_sequences([list(map(bytearray,source_text))], maxlen=max_encoder_seq_length, padding='pre'), num_classes=s2s.num_encoder_tokens+1)[:,:,1:] # remove separate dimension for zero/padding
+    #return to_categorical(list(map(bytearray,[source_text + b'\n'])), num_classes=s2s.num_encoder_tokens+1)[:,:,1:]
+    #return bytearray(source_text+b'\n')
     return np.eye(256, dtype=np.float32)[bytearray(source_text+b'\n'),1:]
 
-print("usage example:\n# for reading in decode_sequence_beam(encode_text(b'hello world!')):\n#     print(reading.decode('utf-8'))")
+print("usage example:\n# for reading in s2s.decode_sequence_beam(encode_text(b'hello world!')):\n#     print(reading.decode('utf-8'))")
