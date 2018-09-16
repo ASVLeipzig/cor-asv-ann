@@ -13,7 +13,8 @@
          p # print
 	 b}
 	 
-/: [0-9]/{s/^.*: //; # other value
-          H # append to hold space
-	  b}
-	 
+/^\(Number\|Max\)/{
+        /: [0-9]/{s/^.*: //; # other value
+                  H # append to hold space
+                  b}
+        }

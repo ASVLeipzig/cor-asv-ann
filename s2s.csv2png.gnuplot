@@ -30,7 +30,7 @@ set output arg[1:strlen(arg)-3]."png"
 set grid
 set key center top
 #set multiplot title 'training byte-level seq2seq model with BLSTM + 3 LSTM and 320 nodes HL for eng-fra' layout 5,1 upwards margins 0.1, 0.95, 0.1, 0.9 spacing 0.05
-set multiplot title 'training byte-level seq2seq model with BLSTM + 3 LSTM and 320 nodes HL for '.arg[1:strlen(arg)-8] layout 5,1 upwards margins 0.1, 0.95, 0.1, 0.9 spacing 0.05
+set multiplot title "training byte-level seq2seq model with BLSTM + 3 LSTM and 320 nodes HL\nfor ".arg[1:strlen(arg)-4] layout 5,1 upwards margins 0.1, 0.95, 0.1, 0.9 spacing 0.05
 
 
 set xlabel "epoch (early stopping per batch)"

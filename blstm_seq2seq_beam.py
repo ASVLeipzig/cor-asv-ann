@@ -98,7 +98,8 @@ import codecs
 import numpy as np
 # these should all be wrapped in functions:
 from editdistance import eval as edit_eval
-import pickle
+import pickle, click
+from math import floor
 
 # load pythonrc even with -i
 if 'PYTHONSTARTUP' in environ:
@@ -241,7 +242,13 @@ class Sequence2Sequence(object):
         self.status = 0 # empty / configured / trained?
     
     
-    def gen_data(self, filename):
+    def gen_data(self, filename, shuffle=False):
+        '''generate chunks of vector data from text file
+        
+        opens `filename` in binary mode, iterates it once,
+        producing 512kB chunks of lines at a time,
+        randomly shuffling lines within chunk if `shuffle`
+        '''
         from keras.preprocessing.sequence import pad_sequences
         
         with open(filename, 'rb') as file:
@@ -293,7 +300,8 @@ class Sequence2Sequence(object):
                 
                 # shuffle within chunk so validation split does not get the longest sequences only
                 indices = np.arange(num_samples)
-                np.random.shuffle(indices)
+                if shuffle:
+                    np.random.shuffle(indices)
                 encoder_input_data = encoder_input_data[indices]
                 decoder_input_data = decoder_input_data[indices]
                 decoder_output_data = decoder_output_data[indices]
@@ -404,7 +412,7 @@ class Sequence2Sequence(object):
         
         # lines in this file are sorted by sequence length!
         # instead of fit_generator (which precludes automatic validation_split):
-        for (input, output, sample_weight) in self.gen_data(filename): # get one increment of data
+        for (input, output, sample_weight) in self.gen_data(filename, shuffle=True): # get one increment of data
             self.encoder_decoder_model.fit(input, output,
                                            sample_weight=sample_weight,
                                            batch_size=self.batch_size,
@@ -496,6 +504,8 @@ class Sequence2Sequence(object):
         return decoded_sentence
     
     def decode_sequence_beam(self, source_seq):
+        from bisect import insort_left
+
         decoder = codecs.getincrementaldecoder('utf8')()
         decoder.decode(b'\t')
         next_fringe = [Node(parent=None,
@@ -503,48 +513,66 @@ class Sequence2Sequence(object):
                             value=b'\t'[0], # start symbol byte
                             cost=0.0,
                             extras=decoder.getstate())]
-        hypotheses = []
+        hypotheses = [] # list of results (spanning start symbol to end symbol)
         
         # generator will raise StopIteration if hypotheses is still empty after loop
-        for l in range(300):
+        MIN_LENGTH = max(5, floor(source_seq.shape[0]/2)) # minimum byte length of output
+        MAX_LENGTH = max(5, min(source_seq.shape[0]*2, source_seq.shape[0]+20)) # maximum byte length of output
+        MAX_BATCHES = max(20, MAX_LENGTH*3) # how many batches will be processed per line?
+        for l in range(MAX_BATCHES):
             # try:
             #     next(n for n in next_fringe if all(np.array_equal(x,y) for x,y in zip(nonbeam_states[:l+1], [s.state for s in n.to_sequence()])))
             # except StopIteration:
             #     print('greedy result falls off beam search at pos', l, nonbeam_seq[:l+1])
             fringe = []
-            for n in next_fringe:
-                if n.value == b'\n'[0]: # end symbol byte
+            while next_fringe:
+                n = next_fringe.pop()
+                if n.value == b'\n'[0] and n.length >= MIN_LENGTH: # end symbol byte, but not significantly shorter than input?
                     hypotheses.append(n)
                     #print('found new solution', bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
-                else:
+                elif n.length > MAX_LENGTH: # output significantly longer than input?
+                    pass
+                    #print('discarding over-long hypothesis', bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
+                else: # normal step
                     fringe.append(n)
                     #print('added new hypothesis', bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
-            if not fringe or len(hypotheses) >= self.beam_width_out:
-                break
+                if len(fringe) >= self.batch_size:
+                    break # enough for one batch
+            if len(hypotheses) >= self.beam_width_out:
+                break # done
+            if not fringe: # ran out of hypotheses (due to UTF-8 or maximum length constraints)?
+                break # will give StopIteration unless we have some results already
             
             # use fringe leaves as minibatch, but with only 1 timestep
             target_seq = np.expand_dims(np.eye(256, dtype=np.float32)[[n.value for n in fringe], 1:], axis=1) # add time dimension
             states_val = [np.vstack([n.state[layer] for n in fringe]) for layer in range(len(fringe[0].state))] # stack layers across batch
             output = self.decoder_model.predict_on_batch([target_seq] + states_val)
             scores_output = output[0][:,-1] # only last timestep
-            scores_output_best = np.argsort(scores_output, axis=1)[:,-self.beam_width:] # still in reverse sort order
+            scores_output_order = np.argsort(scores_output, axis=1) # still in reverse order (worst first)
+            #[:,-self.batch_size:] # for fixed beam width
             states_output = list(output[1:]) # from (layers) tuple
-            
-            next_fringe = []
             for i, n in enumerate(fringe): # iterate over batch (1st dim)
                 scores = scores_output[i,:]
-                scores_best = scores_output_best[i,:]
+                scores_order = scores_output_order[i,:]
+                highest = scores[scores_order[-1]]
+                beampos = 256 - np.searchsorted(scores[scores_order], 0.05 * highest) # variable beam width
                 states = [layer[i:i+1] for layer in states_output] # unstack layers for current sample
-                logscores = -np.log(scores[scores_best])
-                for best, logscore in zip(scores_best, logscores): # follow up on beam_width best predictions
+                logscores = -np.log(scores[scores_order])
+                pos = 0
+                for best, logscore in zip(reversed(scores_order), reversed(logscores)): # follow up on best predictions
                     decoder.setstate(n.extras)
                     try:
                         decoder.decode(bytes([best+1]))
                         n_new = Node(parent=n, state=states, value=best+1, cost=logscore, extras=decoder.getstate())
-                        next_fringe.append(n_new)
+                        insort_left(next_fringe, n_new)
+                        pos += 1
                     except UnicodeDecodeError:
                         pass # ignore this alternative
-            next_fringe = sorted(next_fringe, key=lambda n: n.cum_cost)[:self.beam_width]
+                    if pos > beampos: # less than one tenth the highest probability?
+                        break # ignore further alternatives
+            if len(next_fringe) > MAX_BATCHES * self.batch_size: # more than can ever be processed within limits?
+                next_fringe = next_fringe[-MAX_BATCHES*self.batch_size:] # to save memory, keep only best
+            #print("queue length %d" % len(next_fringe))
         
         hypotheses.sort(key=lambda n: n.cum_cost)
         for hypothesis in hypotheses[:self.beam_width_out]:
@@ -562,6 +590,7 @@ class Node(object):
         self.cum_cost = parent.cum_cost + cost if parent else cost # e.g. -log(p) of sequence up to current node (including)
         self.length = 1 if parent is None else parent.length + 1
         self.extras = extras
+        self._norm_cost = self.cum_cost / self.length
         self._sequence = None
     
     def to_sequence(self):
@@ -576,6 +605,23 @@ class Node(object):
     
     def to_sequence_of_values(self):
         return [s.value for s in self.to_sequence()]
+
+    # for sort order, use cumulative costs relative to length
+    # (in order to get a fair comparison across different lengths,
+    #  and hence, depth-first search), and use inverse order
+    # (so the faster pop() can be used)
+    def __lt__(self, other):
+        return other._norm_cost < self._norm_cost
+    def __le__(self, other):
+        return other._norm_cost <= self._norm_cost
+    def __eq__(self, other):
+        return other._norm_cost == self._norm_cost
+    def __ne__(self, other):
+        return other._norm_cost != self._norm_cost
+    def __gt__(self, other):
+        return other._norm_cost > self._norm_cost
+    def __ge__(self, other):
+        return other._norm_cost >= self._norm_cost
 
 
 s2s = Sequence2Sequence()
@@ -625,37 +671,46 @@ w_edits_greedy = 0
 w_edits_beamed = 0
 for (input, output, sample_weight) in s2s.gen_data(data_path2):
     n = input[0].shape[0]
-    for i in range(n):
-        # Take one sequence (part of the test set) and try decoding it
-        source_seq = input[0][i]
-        target_seq = input[1][i]
-        source_line = (source_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
-        target_line = (target_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
-        decoded_text = s2s.decode_sequence_greedy(source_seq).strip().decode("utf-8", "ignore")
-        beamdecoded_text = next(s2s.decode_sequence_beam(source_seq)).strip().decode("utf-8", "strict") # query only 1-best
-        source_text = source_line.strip().decode("utf-8", "strict")
-        target_text = target_line.strip().decode("utf-8", "strict")
-        
-        edits = edit_eval(source_text,target_text)
-        c_edits_ocr += edits
-        c_total += len(target_text)
-        edits = edit_eval(decoded_text,target_text)
-        c_edits_greedy += edits
-        edits = edit_eval(beamdecoded_text,target_text)
-        c_edits_beamed += edits
-        
-        decoded_tokens = decoded_text.split(" ")
-        beamdecoded_tokens = beamdecoded_text.split(" ")
-        source_tokens = source_text.split(" ")
-        target_tokens = target_text.split(" ")
-        
-        edits = edit_eval(source_tokens,target_tokens)
-        w_edits_ocr += edits
-        w_total += len(target_tokens)
-        edits = edit_eval(decoded_tokens,target_tokens)
-        w_edits_greedy += edits
-        edits = edit_eval(beamdecoded_tokens,target_tokens)
-        w_edits_beamed += edits
+    with click.progressbar(range(n)) as bar:
+        for i in bar:
+            # Take one sequence (part of the test set) and try decoding it
+            source_seq = input[0][i]
+            target_seq = input[1][i]
+            source_line = (source_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+            target_line = (target_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+            source_text = source_line.strip().decode("utf-8", "strict")
+            target_text = target_line.strip().decode("utf-8", "strict")
+            decoded_text = s2s.decode_sequence_greedy(source_seq).strip().decode("utf-8", "ignore")
+            try:
+                beamdecoded_text = next(s2s.decode_sequence_beam(source_seq)).strip().decode("utf-8", "strict") # query only 1-best
+                #print('Source input     ', source_text)
+                #print('Target output    ', target_text)
+                #print('Target (greedy): ', decoded_text)
+                #print('Target (beamed): ', beamdecoded_text)
+            except StopIteration:
+                print('no beam decoder result within processing limits for', source_text, target_text)
+                continue # skip this line
+
+            edits = edit_eval(source_text,target_text)
+            c_edits_ocr += edits
+            c_total += len(target_text)
+            edits = edit_eval(decoded_text,target_text)
+            c_edits_greedy += edits
+            edits = edit_eval(beamdecoded_text,target_text)
+            c_edits_beamed += edits
+
+            decoded_tokens = decoded_text.split(" ")
+            beamdecoded_tokens = beamdecoded_text.split(" ")
+            source_tokens = source_text.split(" ")
+            target_tokens = target_text.split(" ")
+
+            edits = edit_eval(source_tokens,target_tokens)
+            w_edits_ocr += edits
+            w_total += len(target_tokens)
+            edits = edit_eval(decoded_tokens,target_tokens)
+            w_edits_greedy += edits
+            edits = edit_eval(beamdecoded_tokens,target_tokens)
+            w_edits_beamed += edits
 
 print("CER OCR: {}".format(c_edits_ocr / c_total))
 print("CER greedy: {}".format(c_edits_greedy / c_total))
