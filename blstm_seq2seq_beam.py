@@ -242,77 +242,137 @@ class Sequence2Sequence(object):
         self.status = 0 # empty / configured / trained?
     
     
-    def gen_data(self, filename, shuffle=False):
-        '''generate chunks of vector data from text file
+    def gen_data(self, filename, train=False, split=None, shuffle=False, get_size=False, get_edits=False):
+        '''generate batches of vector data from text file
         
-        opens `filename` in binary mode, iterates it once,
-        producing 512kB chunks of lines at a time,
-        randomly shuffling lines within chunk if `shuffle`
+        Opens `filename` in binary mode, loops over it (unless `get_size` or `get_edits`),
+        producing one window of `self.batch_size` lines at a time
+        (padding windows to the longest line of the batch, respectively).
+        Skips lines at `split` positions, depending on `train` (upper vs lower partition),
+        randomly shuffling lines within batch if `shuffle`.
+        Yields:
+        - accumulated prediction error metrics if `get_edits`,
+        - number of batches if `get_size`,
+        - raw vector data (for fit_generator/evaluate_generator) otherwise.
         '''
         from keras.preprocessing.sequence import pad_sequences
         
         with open(filename, 'rb') as file:
             while True:
-                lines = file.readlines(500000) # no more than 512 kB at once
-                if not lines and file.tell() > 0:
-                    break
-                #     file.seek(0) # make sure the generator wraps around
-                #     gen_data(file)
                 source_texts = []
                 target_texts = []
-                for line in lines:
-                    if not line: # empty
-                        continue
+                batch_no = 0
+                for line_no, line in enumerate(file):
+                    if split is np.ndarray and (split[line_no].item() < 0.2) == train:
+                        continue # data shared between training and validation: belongs to other generator
                     source_text, target_text = line.split(b'\t')
                     source_text = source_text + b'\n' # add end-of-sequence
                     target_text = b'\t' + target_text # add start-of-sequence (readlines already keeps newline as end-of-sequence)
                     source_texts.append(source_text)
                     target_texts.append(target_text)
-                max_encoder_seq_length = max([len(txt) for txt in source_texts])
-                max_decoder_seq_length = max([len(txt) for txt in target_texts])
-                num_samples = len(source_texts)
-                print('Number of samples:', num_samples)
-                print('Max sequence length for sources:', max_encoder_seq_length)
-                print('Max sequence length for targets:', max_decoder_seq_length)
-                
-                #encoder_input_sequences = source_tokenizer.texts_to_sequences(source_texts)
-                #decoder_input_sequences = target_tokenizer.texts_to_sequences(target_texts)
-                encoder_input_sequences = list(map(bytearray,source_texts))
-                decoder_input_sequences = list(map(bytearray,target_texts))
-                encoder_input_sequences = pad_sequences(encoder_input_sequences, maxlen=max_encoder_seq_length, padding='post')
-                decoder_input_sequences = pad_sequences(decoder_input_sequences, maxlen=max_decoder_seq_length, padding='post')
-                #encoder_input_data = to_categorical(encoder_input_sequences, num_classes=self.num_encoder_tokens+1)
-                #decoder_input_data = to_categorical(decoder_input_sequences, num_classes=self.num_decoder_tokens+1)
-                #encoder_input_data = encoder_input_data[:,:,1:] # remove separate dimension for zero/padding
-                #decoder_input_data = decoder_input_data[:,:,1:] # remove separate dimension for zero/padding
-                #encoder_input_data = np.array(encoder_input_sequences, dtype=np.uint8)
-                #decoder_input_data = np.array(decoder_input_sequences, dtype=np.uint8)
-                #decoder_output_data = np.eye(256, dtype=np.float32)[decoder_input_data,1:]
-                encoder_input_data = np.eye(256, dtype=np.float32)[encoder_input_sequences,1:]
-                decoder_input_data = np.eye(256, dtype=np.float32)[decoder_input_sequences,1:]
-                # teacher forcing:
-                decoder_output_data = np.roll(decoder_input_data,-1,axis=1) # output data will be ahead by 1 timestep
-                decoder_output_data[:,-1,:] = np.zeros(self.num_decoder_tokens) # delete+pad start token rolled in at the other end
-                
-                # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
-                decoder_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
-                decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0.
-                
-                # shuffle within chunk so validation split does not get the longest sequences only
-                indices = np.arange(num_samples)
-                if shuffle:
-                    np.random.shuffle(indices)
-                encoder_input_data = encoder_input_data[indices]
-                decoder_input_data = decoder_input_data[indices]
-                decoder_output_data = decoder_output_data[indices]
-                decoder_output_weights = decoder_output_weights[indices]
-                
-                yield ([encoder_input_data, decoder_input_data], decoder_output_data, decoder_output_weights)
+                    
+                    if len(source_texts) == self.batch_size: # end of batch
+                        batch_no += 1
+                        if get_size: # merely calculate number of batches that would be generated?
+                            source_texts = []
+                            target_texts = []
+                            continue
+
+                        # vectorize
+                        max_encoder_seq_length = max([len(txt) for txt in source_texts])
+                        max_decoder_seq_length = max([len(txt) for txt in target_texts])
+                        
+                        #print('Max sequence length for sources:', max_encoder_seq_length)
+                        #print('Max sequence length for targets:', max_decoder_seq_length)
+                        
+                        encoder_input_sequences = list(map(bytearray,source_texts))
+                        decoder_input_sequences = list(map(bytearray,target_texts))
+                        encoder_input_sequences = pad_sequences(encoder_input_sequences, maxlen=max_encoder_seq_length, padding='post')
+                        decoder_input_sequences = pad_sequences(decoder_input_sequences, maxlen=max_decoder_seq_length, padding='post')
+                        encoder_input_data = np.eye(256, dtype=np.float32)[encoder_input_sequences,1:]
+                        decoder_input_data = np.eye(256, dtype=np.float32)[decoder_input_sequences,1:]
+                        # teacher forcing:
+                        decoder_output_data = np.roll(decoder_input_data,-1,axis=1) # output data will be ahead by 1 timestep
+                        decoder_output_data[:,-1,:] = np.zeros(self.num_decoder_tokens) # delete+pad start token rolled in at the other end
+                        
+                        # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
+                        decoder_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
+                        decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0.
+                        
+                        # shuffle within batch so validation split does not get the longest sequences only
+                        if shuffle:
+                            indices = np.arange(self.batch_size)
+                            np.random.shuffle(indices)
+                            encoder_input_data = encoder_input_data[indices]
+                            decoder_input_data = decoder_input_data[indices]
+                            decoder_output_data = decoder_output_data[indices]
+                            decoder_output_weights = decoder_output_weights[indices]
+
+                        if get_edits: # calculate edits from decoding
+                            c_total, w_total = 0, 0
+                            c_edits_ocr, w_edits_ocr = 0, 0
+                            c_edits_greedy, w_edits_greedy = 0, 0
+                            c_edits_beamed, w_edits_beamed = 0, 0
+                            for i in range(self.batch_size):
+                                source_seq = encoder_input_data[i]
+                                target_seq = decoder_input_data[i]
+                                # Take one sequence (part of the training/validation set) and try decoding it
+                                source_line = (source_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+                                target_line = (target_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
+                                source_text = source_line.strip().decode("utf-8", "strict")
+                                target_text = target_line.strip().decode("utf-8", "strict")
+                                decoded_line = self.decode_sequence_greedy(source_seq)
+                                decoded_text = decoded_line.strip().decode("utf-8", "ignore")
+                                try:
+                                    beamdecoded_line = next(self.decode_sequence_beam(source_seq)) # query only 1-best
+                                    beamdecoded_text = beamdecoded_line.strip().decode("utf-8", "strict")
+                                except StopIteration:
+                                    print('no beam decoder result within processing limits for', source_text, target_text)
+                                    continue # skip this line
+                                print('Line', line_no+i)
+                                print('Source input  from', 'training:' if train else 'test:    ', source_text)
+                                print('Target output from', 'training:' if train else 'test:    ', target_text)
+                                print('Target prediction (greedy): ', decoded_text)
+                                print('Target prediction (beamed): ', beamdecoded_text)
+                                
+                                edits = edit_eval(source_text,target_text)
+                                c_edits_ocr += edits
+                                c_total += len(target_text)
+                                edits = edit_eval(decoded_text,target_text)
+                                c_edits_greedy += edits
+                                edits = edit_eval(beamdecoded_text,target_text)
+                                c_edits_beamed += edits
+                                
+                                decoded_tokens = decoded_text.split(" ")
+                                beamdecoded_tokens = beamdecoded_text.split(" ")
+                                source_tokens = source_text.split(" ")
+                                target_tokens = target_text.split(" ")
+                                
+                                edits = edit_eval(source_tokens,target_tokens)
+                                w_edits_ocr += edits
+                                w_total += len(target_tokens)
+                                edits = edit_eval(decoded_tokens,target_tokens)
+                                w_edits_greedy += edits
+                                edits = edit_eval(beamdecoded_tokens,target_tokens)
+                                w_edits_beamed += edits
+                            yield (c_total, c_edits_ocr, c_edits_greedy, c_edits_beamed, w_total, w_edits_ocr, w_edits_greedy, w_edits_beamed)
+                        else:
+                            yield ([encoder_input_data, decoder_input_data], decoder_output_data, decoder_output_weights)
+                        
+                        source_texts = []
+                        target_texts = []
+                if get_size: # return size, do not loop
+                    yield batch_no
+                elif get_edits: # do not loop
+                    break
+                else:
+                    file.seek(0) # make sure the generator wraps around
     
     def configure(self):
         from keras.layers import Input, Dense, TimeDistributed
         from keras.layers import LSTM, CuDNNLSTM, Bidirectional, concatenate
         from keras.models import Model
+        from keras.optimizers import Adam
         from keras import backend as K
         
         # automatically switch to CuDNNLSTM if CUDA GPU is available:
@@ -397,7 +457,7 @@ class Sequence2Sequence(object):
         
         ## Compile model
         self.encoder_decoder_model.compile(loss='categorical_crossentropy',
-                                           optimizer='rmsprop',
+                                           optimizer=Adam(), # 'adam', clipvalue=0.5
                                            sample_weight_mode='temporal') # sample_weight slows down slightly (20%)
         
         self.status = 1
@@ -409,32 +469,20 @@ class Sequence2Sequence(object):
         callbacks = [EarlyStopping(monitor='val_loss', patience=1, verbose=1, mode='min'),
                      ModelCheckpoint('s2s_last.h5', monitor='val_loss', # to be able to replay long epochs (crash/overfitting)
                                      save_best_only=True, save_weights_only=True, mode='min')]
-        
+
         # lines in this file are sorted by sequence length!
-        # instead of fit_generator (which precludes automatic validation_split):
-        for (input, output, sample_weight) in self.gen_data(filename, shuffle=True): # get one increment of data
-            self.encoder_decoder_model.fit(input, output,
-                                           sample_weight=sample_weight,
-                                           batch_size=self.batch_size,
-                                           epochs=self.epochs,
-                                           callbacks=callbacks,
-                                           validation_split=0.2)
-            
-            n = input[0].shape[0]
-            for i in list(range(0,3))+list(range(n-3,n)):
-                # Take one sequence (part of the training/validation set) and try decoding it
-                source_seq = input[0][i]
-                target_seq = input[1][i]
-                source_line = (source_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
-                target_line = (target_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
-                decoded_line = self.decode_sequence_greedy(source_seq)
-                beamdecoded_line = next(self.decode_sequence_beam(source_seq)) # query only 1-best
-                print('Sample',i,)
-                print('Source input  from', 'training:' if i<n*0.8 else 'test:    ', source_line.strip().decode("utf-8", "strict"))
-                print('Target output from', 'training:' if i<n*0.8 else 'test:    ', target_line.strip().decode("utf-8", "strict"))
-                print('Target prediction (greedy): ', decoded_line.strip().decode("utf-8", "ignore"))
-                print('Target prediction (beamed): ', beamdecoded_line.strip().decode("utf-8", "strict"))
-        
+        # count how many batches the generator would return per epoch
+        with open(filename, 'rb') as f:
+            num_lines = sum(1 for lines in f)
+        split_rand = np.random.uniform(0, 1, (num_lines,))
+        training_epoch_size = next(self.gen_data(filename, train=True, split=split_rand, get_size=True))
+        validation_epoch_size = next(self.gen_data(filename, train=False, split=split_rand, get_size=True))
+        self.encoder_decoder_model.fit_generator(
+            self.gen_data(filename, train=True, split=split_rand, shuffle=True),
+            steps_per_epoch=training_epoch_size, epochs=self.epochs,
+            validation_data=self.gen_data(filename, train=False, split=split_rand),
+            validation_steps=validation_epoch_size, verbose=1, callbacks=callbacks)
+                
         self.state = 2
     
     def load_config(self, filename):
@@ -458,6 +506,10 @@ class Sequence2Sequence(object):
         self.encoder_decoder_model.save_weights(filename)
     
     def decode_sequence_greedy(self, source_seq):
+        self.encoder_decoder_model.reset_states()
+        self.encoder_model.reset_states()
+        self.decoder_model.reset_states()
+        
         # Encode the source as state vectors.
         states_value = self.encoder_model.predict(np.expand_dims(source_seq, axis=0))
         
@@ -505,9 +557,14 @@ class Sequence2Sequence(object):
     
     def decode_sequence_beam(self, source_seq):
         from bisect import insort_left
-
+        
+        source_len = len(source_seq.nonzero()[1])
         decoder = codecs.getincrementaldecoder('utf8')()
         decoder.decode(b'\t')
+        
+        self.encoder_decoder_model.reset_states()
+        self.encoder_model.reset_states()
+        self.decoder_model.reset_states()
         next_fringe = [Node(parent=None,
                             state=self.encoder_model.predict(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
                             value=b'\t'[0], # start symbol byte
@@ -516,8 +573,8 @@ class Sequence2Sequence(object):
         hypotheses = [] # list of results (spanning start symbol to end symbol)
         
         # generator will raise StopIteration if hypotheses is still empty after loop
-        MIN_LENGTH = max(5, floor(source_seq.shape[0]/2)) # minimum byte length of output
-        MAX_LENGTH = max(5, min(source_seq.shape[0]*2, source_seq.shape[0]+20)) # maximum byte length of output
+        MIN_LENGTH = max(5, floor(source_len/2)) # minimum byte length of output
+        MAX_LENGTH = max(5, min(source_len*2, source_len+20)) # maximum byte length of output
         MAX_BATCHES = max(20, MAX_LENGTH*3) # how many batches will be processed per line?
         for l in range(MAX_BATCHES):
             # try:
@@ -669,48 +726,20 @@ w_total = 0
 w_edits_ocr = 0
 w_edits_greedy = 0
 w_edits_beamed = 0
-for (input, output, sample_weight) in s2s.gen_data(data_path2):
-    n = input[0].shape[0]
-    with click.progressbar(range(n)) as bar:
-        for i in bar:
-            # Take one sequence (part of the test set) and try decoding it
-            source_seq = input[0][i]
-            target_seq = input[1][i]
-            source_line = (source_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
-            target_line = (target_seq.nonzero()[1]+1).astype(np.uint8).tobytes()
-            source_text = source_line.strip().decode("utf-8", "strict")
-            target_text = target_line.strip().decode("utf-8", "strict")
-            decoded_text = s2s.decode_sequence_greedy(source_seq).strip().decode("utf-8", "ignore")
-            try:
-                beamdecoded_text = next(s2s.decode_sequence_beam(source_seq)).strip().decode("utf-8", "strict") # query only 1-best
-                #print('Source input     ', source_text)
-                #print('Target output    ', target_text)
-                #print('Target (greedy): ', decoded_text)
-                #print('Target (beamed): ', beamdecoded_text)
-            except StopIteration:
-                print('no beam decoder result within processing limits for', source_text, target_text)
-                continue # skip this line
-
-            edits = edit_eval(source_text,target_text)
-            c_edits_ocr += edits
-            c_total += len(target_text)
-            edits = edit_eval(decoded_text,target_text)
-            c_edits_greedy += edits
-            edits = edit_eval(beamdecoded_text,target_text)
-            c_edits_beamed += edits
-
-            decoded_tokens = decoded_text.split(" ")
-            beamdecoded_tokens = beamdecoded_text.split(" ")
-            source_tokens = source_text.split(" ")
-            target_tokens = target_text.split(" ")
-
-            edits = edit_eval(source_tokens,target_tokens)
-            w_edits_ocr += edits
-            w_total += len(target_tokens)
-            edits = edit_eval(decoded_tokens,target_tokens)
-            w_edits_greedy += edits
-            edits = edit_eval(beamdecoded_tokens,target_tokens)
-            w_edits_beamed += edits
+epoch_size = next(s2s.gen_data(data_path2, get_size=True))
+with click.progressbar(length=epoch_size) as bar:
+    for (c_total_batch, c_edits_ocr_batch, c_edits_greedy_batch, c_edits_beamed_batch,
+         w_total_batch, w_edits_ocr_batch, w_edits_greedy_batch, w_edits_beamed_batch) \
+         in s2s.gen_data(data_path2, get_edits=True):
+        bar.update(1)
+        c_total += c_total_batch
+        c_edits_ocr += c_edits_ocr_batch
+        c_edits_greedy += c_edits_greedy_batch
+        c_edits_beamed += c_edits_beamed_batch
+        w_total += w_total_batch
+        w_edits_ocr += w_edits_ocr_batch
+        w_edits_greedy += w_edits_greedy_batch
+        w_edits_beamed += w_edits_beamed_batch
 
 print("CER OCR: {}".format(c_edits_ocr / c_total))
 print("CER greedy: {}".format(c_edits_greedy / c_total))
