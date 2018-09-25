@@ -263,11 +263,10 @@ class Sequence2Sequence(object):
                         if self.stateful:
                             if reset_cb: # model controlled by callbacks (training)
                                 reset_cb.reset("lines %d-%d" % (line_no, line_no+batch_size)) # inform callback
-                            elif False: # model controlled by caller (batch prediction)
-                                # does not work for some reason (never returns, even if passing tf_session.as_default() and tf_graph.as_default())
-                                self.encoder_decoder_model.reset_states()
+                            else: # model controlled by caller (batch prediction)
+                                #self.encoder_decoder_model.reset_states() # does not work for some reason (never returns, even if passing tf_session.as_default() and tf_graph.as_default())
                                 self.encoder_model.reset_states()
-                                self.decoder_model.reset_states()
+                                #self.decoder_model.reset_states() # not stateful yet
                     source_text, target_text = line.split(b'\t')
                     source_text = source_text.decode('utf-8', 'strict') + u'\n' # add end-of-sequence
                     target_text = target_text.decode('utf-8', 'strict') # start-of-sequence will be added window by window, end-of-sequence already preserved by file iterator
@@ -358,7 +357,9 @@ class Sequence2Sequence(object):
                             raise Exception("target window does not fit twice the source window in alignment", alignment1, line.decode("utf-8"), source_windows, target_windows)
                     except Exception as e:
                         print(e)
-                    
+
+                    source_text = u''
+                    target_text = u''
                     source_texts.append(source_windows)
                     target_texts.append(target_windows)
                     
@@ -392,7 +393,7 @@ class Sequence2Sequence(object):
                                     # encoder uses 256 dimensions (including zero byte):
                                     encoder_input_data[j*np.ones(len(enc_seq), dtype='int'), 
                                                        np.arange(len(enc_seq), dtype='int'), 
-                                                       np.array(enc_seq, dtype='int')-1] = 1
+                                                       np.array(enc_seq, dtype='int')] = 1
                                     # zero bytes in encoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
                                     padlen = self.window_length - len(enc_seq)
                                     decoder_input_data[j*np.ones(padlen, dtype='int'), 
@@ -424,9 +425,16 @@ class Sequence2Sequence(object):
                                 # Take one sequence (part of the training/validation set) and try decoding it
                                 source_window = bytes(source_texts[0][i]).rstrip(bytes([0])).decode("utf-8", "strict")
                                 target_window = bytes(target_texts[0][i]).rstrip(bytes([0])).lstrip(b'\t').decode("utf-8", "strict")
-                                decoded_text += self.decode_sequence_greedy(source_seq).rstrip(bytes([0])).decode("utf-8", "ignore")
+                                source_text += source_window
+                                target_text += target_window
+                                if self.stateful:
+                                    # avoid repeating encoder in both functions (greedy and beamed), because we can only reset at the first window
+                                    source_state = self.encoder_model.predict_on_batch(encoder_input_data)
+                                else:
+                                    source_state = None
+                                decoded_text += self.decode_sequence_greedy(source_seq, source_state=source_state).decode("utf-8", "ignore")
                                 try: # query only 1-best
-                                    beamdecoded_text += next(self.decode_sequence_beam(source_seq)).rstrip(bytes([0])).decode("utf-8", "strict")
+                                    beamdecoded_text += next(self.decode_sequence_beam(source_seq, source_state=source_state)).decode("utf-8", "strict")
                                 except StopIteration:
                                     print('no beam decoder result within processing limits for', source_text, target_text, 'window', j, source_window, target_window)
                                     continue # skip this window
@@ -522,7 +530,7 @@ class Sequence2Sequence(object):
             encoder_state_outputs.extend([state_h, state_c])
         
         # Set up an input sequence and process it.
-        decoder_inputs = Input(shape=(self.window_length*2, self.num_decoder_tokens))
+        decoder_inputs = Input(shape=(None, self.num_decoder_tokens))
         # Set up decoder to return full output sequences (so we can train in parallel),
         # to use encoder_state_outputs as initial state and return final states as well. 
         # We don't use those states in the training model, but we will use them 
@@ -684,10 +692,11 @@ class Sequence2Sequence(object):
         assert self.status > 1 # already trained
         self.encoder_decoder_model.save_weights(filename)
     
-    def decode_sequence_greedy(self, source_seq):
+    def decode_sequence_greedy(self, source_seq, source_state=None):
         '''Predict from one source vector window without alternatives.
         
-        Use encoder input window vector `source_seq` (batch of size 1).
+        Use encoder input window vector `source_seq` (in a batch of size 1).
+        If `source_state` is given, bypass that step to protect the encoder state.
         Start decoder with start-of-sequence, then keep decoding until
         end-of-sequence is found or output window length is full.
         Decode by using the best predicted output byte as next input.
@@ -698,11 +707,11 @@ class Sequence2Sequence(object):
         #self.decoder_model.reset_states()
        
         # Encode the source as state vectors.
-        states_value = self.encoder_model.predict(np.expand_dims(source_seq, axis=0))
+        states_value = source_state if source_state else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
         
         # Generate empty target sequence of length 1.
-        target_seq = np.zeros((1, 1, self.num_decoder_tokens))
         #target_seq = np.zeros((1, 1))
+        target_seq = np.zeros((1, 1, self.num_decoder_tokens))
         # Populate the first character of target sequence with the start character.
         #target_seq[0, 0, target_token_index['\t']-1] = 1.
         target_seq[0, 0, b'\t'[0]] = 1.
@@ -710,9 +719,8 @@ class Sequence2Sequence(object):
         
         # Sampling loop for a batch of sequences
         # (to simplify, here we assume a batch of size 1).
-        stop_condition = False
         decoded_text = b''
-        while not stop_condition:
+        for i in range(1, self.window_length*2):
             output = self.decoder_model.predict_on_batch([target_seq] + states_value)
             output_scores = output[0]
             output_states = output[1:]
@@ -723,17 +731,15 @@ class Sequence2Sequence(object):
             sampled_char = bytes([sampled_token_index])
             decoded_text += sampled_char
             
-            # Exit condition: either hit max length
-            # or find stop character.
-            if (sampled_char == b'\n' or
-                len(decoded_text) >= self.window_length*2):
-                stop_condition = True
-            
+            # Exit condition: either hit max length or find stop character.
+            if sampled_char == b'\n':
+                break
+          
             # Update the target sequence (of length 1).
-            target_seq = np.zeros((1, 1, self.num_decoder_tokens))
             #target_seq = np.zeros((1, 1))
-            target_seq[0, 0, sampled_token_index] = 1.
+            target_seq = np.zeros((1, 1, self.num_decoder_tokens))
             #target_seq[0, 0] = sampled_token_index+1
+            target_seq[0, 0, sampled_token_index] = 1.
             # feeding back the softmax vector directly vastly deteriorates predictions (because only identity vectors are presented during training)
             # but we should add beam search (keep n best overall paths, add k best predictions here)
             
@@ -742,10 +748,11 @@ class Sequence2Sequence(object):
         
         return decoded_text.strip(bytes([0])) # strip trailing but keep intermediate zero bytes
     
-    def decode_sequence_beam(self, source_seq):
+    def decode_sequence_beam(self, source_seq, source_state=None):
         '''Predict from one source vector window with alternatives.
         
-        Use encoder input window vector `source_seq` (batch of size 1).
+        Use encoder input window vector `source_seq` (in a batch of size 1).
+        If `source_state` is given, bypass that step to protect the encoder state.
         Start decoder with start-of-sequence, then keep decoding until
         end-of-sequence is found or output window length is full, repeatedly
         (but at most beam_width_out times or a maximum number of steps).
@@ -762,10 +769,11 @@ class Sequence2Sequence(object):
         decoder = codecs.getincrementaldecoder('utf8')()
         decoder.decode(b'\t')
         
+        # reset must be done at line break (by caller)
         #self.encoder_model.reset_states()
         #self.decoder_model.reset_states()
         next_fringe = [Node(parent=None,
-                            state=self.encoder_model.predict(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
+                            state=source_state if source_state else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
                             value=b'\t'[0], # start symbol byte
                             cost=0.0,
                             extras=decoder.getstate())]
