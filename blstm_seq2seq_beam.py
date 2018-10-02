@@ -1,3 +1,5 @@
+#!/usr/bin/python -i
+# -*- coding: utf-8
 '''Sequence to sequence translator for noisy channel error correction
 
 Command line interface:
@@ -20,10 +22,14 @@ alignment.sequence.GAP_ELEMENT = 0 # override default
 from alignment.sequence import Sequence, GAP_ELEMENT
 from alignment.vocabulary import Vocabulary
 from alignment.sequencealigner import SimpleScoring, StrictGlobalSequenceAligner
+import threading
+from keras.callbacks import Callback
 
 # load pythonrc even with -i
 if 'PYTHONSTARTUP' in environ:
     exec(open(environ['PYTHONSTARTUP']).read())
+if not 'TF_CPP_MIN_LOG_LEVEL' in environ:
+    environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
 # installing CUDA, cuDNN, Tensorflow with cuDNN support:
 # $ sudo add-apt-repository ppa:graphics-drivers/ppa
@@ -249,29 +255,38 @@ class Sequence2Sequence(object):
         - vector data batches (for fit_generator/evaluate_generator) otherwise.
         '''
         if not batch_size:
-            batch_size = self.batch_size
+            if self.stateful:
+                batch_size = self.batch_size # cannot reduce to 1 here (difference to training would break internal encoder updates)
+            else:
+                batch_size = self.batch_size
 
+        split_ratio = 0.2
+        remainder_pass = False
+        was_pretrained = (self.status > 1)
+        
+        lock = threading.Lock()
         with open(filename, 'rb') as f:
             while True:
-                source_texts = []
-                target_texts = []
+                if not remainder_pass:
+                    source_lines = []
+                    target_lines = []
                 batch_no = 0
                 for line_no, line in enumerate(f):
-                    if split is np.ndarray and (split[line_no] < 0.2) == train:
+                    if isinstance(split, np.ndarray) and (split[line_no] < split_ratio) == train:
+                        #print('skipping line %d in favour of other generator' % line_no)
                         continue # data shared between training and validation: belongs to other generator
-                    if len(source_texts) == 0 and not get_size: # start of batch
+                    if len(source_lines) == 0 and not get_size: # start of batch
                         if self.stateful:
                             if reset_cb: # model controlled by callbacks (training)
                                 reset_cb.reset("lines %d-%d" % (line_no, line_no+batch_size)) # inform callback
-                            else: # model controlled by caller (batch prediction)
+                            elif get_edits: # model controlled by caller (batch prediction)
+                                #print('resetting encoder for line', line_no, train)
                                 #self.encoder_decoder_model.reset_states() # does not work for some reason (never returns, even if passing tf_session.as_default() and tf_graph.as_default())
                                 self.encoder_model.reset_states()
                                 #self.decoder_model.reset_states() # not stateful yet
                     source_text, target_text = line.split(b'\t')
                     source_text = source_text.decode('utf-8', 'strict') + u'\n' # add end-of-sequence
                     target_text = target_text.decode('utf-8', 'strict') # start-of-sequence will be added window by window, end-of-sequence already preserved by file iterator
-                    decoded_text = u''
-                    beamdecoded_text = u''
                     
                     # byte-align source and target text line, shelve them into successive fixed-size windows
                     source_seq = vocabulary.encodeSequence(Sequence(source_text))
@@ -357,59 +372,63 @@ class Sequence2Sequence(object):
                             raise Exception("target window does not fit twice the source window in alignment", alignment1, line.decode("utf-8"), source_windows, target_windows)
                     except Exception as e:
                         print(e)
-
-                    source_text = u''
-                    target_text = u''
-                    source_texts.append(source_windows)
-                    target_texts.append(target_windows)
                     
-                    if len(source_texts) == batch_size: # end of batch
-                        max_windows = max([len(line) for line in source_texts])                
+                    source_lines.append(source_windows)
+                    target_lines.append(target_windows)
+                    
+                    if len(source_lines) == batch_size: # end of batch
+                        max_windows = max([len(line) for line in source_lines])                
                         if get_size: # merely calculate number of batches that would be generated?
-                            batch_no += 1 if get_edits else max_windows
+                            batch_no += batch_size if get_edits else max_windows
+                            source_lines = []
+                            target_lines = []
+                            continue
+                        if get_edits:
                             source_texts = []
                             target_texts = []
-                            continue
+                            decoded_texts = []
+                            beamdecoded_texts = []
                         
                         # yield windows...
+                        lock.acquire() # ensure no other generator instance interferes within the block of lines
                         for i in range(max_windows):
                             batch_no += 1
                             
                             # vectorize
-                            encoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in source_texts]))
-                            decoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in target_texts]))
+                            encoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in source_lines]))
+                            decoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in target_lines]))
                             # with windowing, we cannot use pad_sequences for zero-padding any more, 
                             # because zero bytes are a valid decoder input or output now (and different from zero input or output):
                             #encoder_input_sequences = pad_sequences(encoder_input_sequences, maxlen=self.window_length, padding='post')
                             #decoder_input_sequences = pad_sequences(decoder_input_sequences, maxlen=self.window_length*2, padding='post')
                             #encoder_input_data = np.eye(256, dtype=np.float32)[encoder_input_sequences,:]
                             #decoder_input_data = np.eye(256, dtype=np.float32)[decoder_input_sequences,:]
-                            encoder_input_data = np.zeros((batch_size, self.window_length, self.num_encoder_tokens), dtype=np.float32)
-                            decoder_input_data = np.zeros((batch_size, self.window_length*2, self.num_decoder_tokens), dtype=np.float32)
+                            encoder_input_data = np.zeros((batch_size, self.window_length, self.num_encoder_tokens), dtype=np.int8)
+                            decoder_input_data = np.zeros((batch_size, self.window_length*2, self.num_decoder_tokens), dtype=np.int8)
                             for j, (enc_seq, dec_seq) in enumerate(zip(encoder_input_sequences, decoder_input_sequences)):
                                 if not len(enc_seq):
                                     continue # empty window (i.e. j-th line is shorter than others): true zero-padding (masked)
                                 else:
                                     # encoder uses 256 dimensions (including zero byte):
-                                    encoder_input_data[j*np.ones(len(enc_seq), dtype='int'), 
-                                                       np.arange(len(enc_seq), dtype='int'), 
-                                                       np.array(enc_seq, dtype='int')] = 1
+                                    encoder_input_data[j*np.ones(len(enc_seq), dtype=np.int8), 
+                                                       np.arange(len(enc_seq), dtype=np.int8), 
+                                                       np.array(enc_seq, dtype=np.int8)] = 1
                                     # zero bytes in encoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
                                     padlen = self.window_length - len(enc_seq)
-                                    decoder_input_data[j*np.ones(padlen, dtype='int'), 
-                                                       np.arange(len(enc_seq), self.window_length, dtype='int'), 
-                                                       np.zeros(padlen, dtype='int')] = 1
+                                    encoder_input_data[j*np.ones(padlen, dtype=np.int8), 
+                                                       np.arange(len(enc_seq), self.window_length, dtype=np.int8), 
+                                                       np.zeros(padlen, dtype=np.int8)] = 1
                                     # decoder uses 256 dimensions (including zero byte):
-                                    decoder_input_data[j*np.ones(len(dec_seq), dtype='int'), 
-                                                       np.arange(len(dec_seq), dtype='int'), 
-                                                       np.array(dec_seq, dtype='int')] = 1
+                                    decoder_input_data[j*np.ones(len(dec_seq), dtype=np.int8), 
+                                                       np.arange(len(dec_seq), dtype=np.int8), 
+                                                       np.array(dec_seq, dtype=np.int8)] = 1
                                     # zero bytes in decoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
                                     padlen = self.window_length*2 - len(dec_seq)
-                                    decoder_input_data[j*np.ones(padlen, dtype='int'), 
-                                                       np.arange(len(dec_seq), self.window_length*2, dtype='int'), 
-                                                       np.zeros(padlen, dtype='int')] = 1
+                                    decoder_input_data[j*np.ones(padlen, dtype=np.int8), 
+                                                       np.arange(len(dec_seq), self.window_length*2, dtype=np.int8), 
+                                                       np.zeros(padlen, dtype=np.int8)] = 1
                             # teacher forcing:
-                            decoder_output_data = np.roll(decoder_input_data,-1,axis=1) # output data will be ahead by 1 timestep
+                            decoder_output_data = np.roll(decoder_input_data,-1,axis=1).astype(np.float32) # output data will be ahead by 1 timestep
                             decoder_output_data[:,-1,:] = np.zeros(self.num_decoder_tokens) # delete+pad start token rolled in at the other end
                             
                             # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
@@ -417,69 +436,86 @@ class Sequence2Sequence(object):
                             decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0.
 
                             if get_edits: # calculate edits from decoding
-                                assert batch_size == 1 # decoding works line-wise (with batches of alternatives)
-                                assert j == 0 # corollary to that
-                                
-                                source_seq = encoder_input_data[0]
-                                target_seq = decoder_input_data[0]
-                                # Take one sequence (part of the training/validation set) and try decoding it
-                                source_window = bytes(source_texts[0][i]).rstrip(bytes([0])).decode("utf-8", "strict")
-                                target_window = bytes(target_texts[0][i]).rstrip(bytes([0])).lstrip(b'\t').decode("utf-8", "strict")
-                                source_text += source_window
-                                target_text += target_window
-                                if self.stateful:
-                                    # avoid repeating encoder in both functions (greedy and beamed), because we can only reset at the first window
-                                    source_state = self.encoder_model.predict_on_batch(encoder_input_data)
-                                else:
-                                    source_state = None
-                                decoded_text += self.decode_sequence_greedy(source_seq, source_state=source_state).decode("utf-8", "ignore")
-                                try: # query only 1-best
-                                    beamdecoded_text += next(self.decode_sequence_beam(source_seq, source_state=source_state)).decode("utf-8", "strict")
-                                except StopIteration:
-                                    print('no beam decoder result within processing limits for', source_text, target_text, 'window', j, source_window, target_window)
-                                    continue # skip this window
+                                # avoid repeating encoder in both functions (greedy and beamed), because we can only reset at the first window
+                                source_states = self.encoder_model.predict_on_batch(encoder_input_data)
+
+                                for j in range(batch_size):
+                                    if i == 0:
+                                        source_texts.append(u'')
+                                        target_texts.append(u'')
+                                        decoded_texts.append(u'')
+                                        beamdecoded_texts.append(u'')
+                                    if i>=len(source_lines[j]) or i>=len(target_lines[j]):
+                                        continue # avoid empty window (masked during training)
+                                    source_seq = encoder_input_data[j]
+                                    target_seq = decoder_input_data[j]
+                                    # Take one sequence (part of the training/validation set) and try decoding it
+                                    source_texts[j] += bytes(source_lines[j][i]).decode("utf-8", "strict")
+                                    target_texts[j] += bytes(target_lines[j][i]).lstrip(b'\t').decode("utf-8", "strict")
+                                    decoded_texts[j] += self.decode_sequence_greedy(source_state=[layer[j:j+1] for layer in source_states]).decode("utf-8", "ignore")
+                                    try: # query only 1-best
+                                        beamdecoded_texts[j] += next(self.decode_sequence_beam(source_state=[layer[j:j+1] for layer in source_states], eol=(i+1>=len(source_lines[j])))).decode("utf-8", "strict")
+                                    except StopIteration:
+                                        print('no beam decoder result within processing limits for', source_texts[j], target_texts[j], 'window', i+1, 'of', len(source_lines[j]))
+                                        continue # skip this line's window
                             else:
-                                yield ([encoder_input_data, decoder_input_data], decoder_output_data)
-                        
+                                if was_pretrained: # sample_weight quickly causes getting stuck with NaN in gradient updates and weights (regardless of loss function, optimizer, gradient clipping, CPU or GPU) when re-training
+                                    yield ([encoder_input_data, decoder_input_data], decoder_output_data)
+                                else:
+                                    yield ([encoder_input_data, decoder_input_data], decoder_output_data, decoder_output_weights)
+                                    
                         if get_edits:
-                            print('Source input  from', 'training:' if train else 'test:    ', source_text.rstrip(u'\n'))
-                            print('Target output from', 'training:' if train else 'test:    ', target_text.rstrip(u'\n'))
-                            print('Target prediction (greedy): ', decoded_text.rstrip(u'\n'))
-                            print('Target prediction (beamed): ', beamdecoded_text.rstrip(u'\n'))
-                            
-                            c_total = len(target_text)
-                            edits = edit_eval(source_text,target_text)
-                            c_edits_ocr = edits
-                            edits = edit_eval(decoded_text,target_text)
-                            c_edits_greedy = edits
-                            edits = edit_eval(beamdecoded_text,target_text)
-                            c_edits_beamed = edits
-                            
-                            decoded_tokens = decoded_text.split(" ")
-                            beamdecoded_tokens = beamdecoded_text.split(" ")
-                            source_tokens = source_text.split(" ")
-                            target_tokens = target_text.split(" ")
-                            
-                            w_total = len(target_tokens)
-                            edits = edit_eval(source_tokens,target_tokens)
-                            w_edits_ocr = edits
-                            edits = edit_eval(decoded_tokens,target_tokens)
-                            w_edits_greedy = edits
-                            edits = edit_eval(beamdecoded_tokens,target_tokens)
-                            w_edits_beamed = edits
-                            
-                            yield (c_total, c_edits_ocr, c_edits_greedy, c_edits_beamed, w_total, w_edits_ocr, w_edits_greedy, w_edits_beamed)
+                            for j in range(batch_size):
+                                print('Source input  from', 'training:' if train else 'test:    ', source_texts[j].rstrip(u'\n'))
+                                print('Target output from', 'training:' if train else 'test:    ', target_texts[j].rstrip(u'\n'))
+                                print('Target prediction (greedy): ', decoded_texts[j].rstrip(u'\n'))
+                                print('Target prediction (beamed): ', beamdecoded_texts[j].rstrip(u'\n'))
+                                
+                                c_total = len(target_texts[j])
+                                edits = edit_eval(source_texts[j],target_texts[j])
+                                c_edits_ocr = edits
+                                edits = edit_eval(decoded_texts[j],target_texts[j])
+                                c_edits_greedy = edits
+                                edits = edit_eval(beamdecoded_texts[j],target_texts[j])
+                                c_edits_beamed = edits
+                                
+                                decoded_tokens = decoded_texts[j].split(" ")
+                                beamdecoded_tokens = beamdecoded_texts[j].split(" ")
+                                source_tokens = source_texts[j].split(" ")
+                                target_tokens = target_texts[j].split(" ")
+                                
+                                w_total = len(target_tokens)
+                                edits = edit_eval(source_tokens,target_tokens)
+                                w_edits_ocr = edits
+                                edits = edit_eval(decoded_tokens,target_tokens)
+                                w_edits_greedy = edits
+                                edits = edit_eval(beamdecoded_tokens,target_tokens)
+                                w_edits_beamed = edits
+                                
+                                yield (c_total, c_edits_ocr, c_edits_greedy, c_edits_beamed, w_total, w_edits_ocr, w_edits_greedy, w_edits_beamed)
                         
-                        source_texts = []
-                        target_texts = []
+                        lock.release()
+                        source_lines = []
+                        target_lines = []
                 
                 if get_size: # return size, do not loop
                     yield batch_no
                 elif get_edits: # do not loop
-                    break
+                    if source_lines and not remainder_pass: # except if partially filled batch remains
+                        # re-enter loop once, adding just enough lines to complete batch
+                        # but picking them randomly from the entire file:
+                        assert train == False
+                        split = np.random.uniform(0, 1, (line_no+1,))
+                        split_ratio = (batch_size*1.5 - len(source_lines)) / (line_no+1) # slightly larger than exact ratio to ensure we will get enough lines (a little more does no harm)
+                        print('wrapping around after %d lines to get %d more lines for last batch with a random split ratio of %.2f' % (line_no+1, batch_size-len(source_lines), split_ratio))
+                        remainder_pass = True # throw away next time we get here
+                        f.seek(0) # make sure the generator can wrap around
+                    else:
+                        break
                 else:
-                    f.seek(0) # make sure the generator wraps around
-    
+                    yield False
+                    f.seek(0) # make sure the generator can wrap around
+
     def configure(self, batch_size=None):
         '''Define and compile encoder and decoder models for the configured parameters.
         
@@ -493,6 +529,7 @@ class Sequence2Sequence(object):
         from keras.layers import Input, Dense, TimeDistributed
         from keras.layers import LSTM, CuDNNLSTM, Bidirectional, concatenate
         from keras.models import Model
+        from keras.optimizers import Adam
         from keras import backend as K
         
         if not batch_size:
@@ -510,6 +547,7 @@ class Sequence2Sequence(object):
         
         # Set up an input sequence and process it.
         if self.stateful:
+            # batch_size = 1 # override does not work (re-configuration would break internal encoder updates)
             encoder_inputs = Input(batch_shape=(batch_size, self.window_length, self.num_encoder_tokens))
         else:
             encoder_inputs = Input(shape=(self.window_length, self.num_encoder_tokens))
@@ -530,7 +568,10 @@ class Sequence2Sequence(object):
             encoder_state_outputs.extend([state_h, state_c])
         
         # Set up an input sequence and process it.
-        decoder_inputs = Input(shape=(None, self.num_decoder_tokens))
+        if self.stateful:
+            decoder_inputs = Input(batch_shape=(None, None, self.num_decoder_tokens)) # shape inference would assume fixed batch size here as well (but we need that to be flexible for prediction)
+        else:
+            decoder_inputs = Input(shape=(None, self.num_decoder_tokens))
         # Set up decoder to return full output sequences (so we can train in parallel),
         # to use encoder_state_outputs as initial state and return final states as well. 
         # We don't use those states in the training model, but we will use them 
@@ -544,6 +585,7 @@ class Sequence2Sequence(object):
             decoder_lstms.append(layer)
             decoder_outputs, _, _ = layer(decoder_inputs if n == 0 else decoder_outputs, 
                                           initial_state=encoder_state_outputs[2*n:2*n+2])
+        #decoder_dense = TimeDistributed(Dense(self.num_decoder_tokens, activation='sigmoid')) # for experimenting with global normalization in beam search (gets worse if done just like that)
         decoder_dense = TimeDistributed(Dense(self.num_decoder_tokens, activation='softmax'))
         decoder_outputs = decoder_dense(decoder_outputs)
 
@@ -600,60 +642,65 @@ class Sequence2Sequence(object):
         Validate on a random fraction of lines automatically separated before.
         (Data are always split by line, regardless of stateless/stateful mode.)
         '''
-        from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
-
-        class ResetStatesCallback(Callback):
-            '''Keras callback for stateful models to reset state between files.
-
-            Callback to be called by `fit_generator()` or even `evaluate_generator()`:
-            do `model.reset_states()` whenever generator sees EOF (on_batch_begin with self.eof),
-            and between training and validation (on_batch_end with batch>=steps_per_epoch-1).
-            '''
-            def __init__(self):
-                self.eof = False
-                self.here = ''
-                self.next = ''
-
-            def reset(self, where):
-                self.eof = True
-                self.next = where
-
-            def on_batch_begin(self, batch, logs={}):
-                if self.eof:
-                    # between training files
-                    self.model.reset_states()
-                    self.eof = False
-                    self.here = self.next
-
-            def on_batch_end(self, batch, logs={}):
-                if logs.get('loss') > 25:
-                    print('huge loss in', self.here, 'at', batch)
-                if (self.params['do_validation'] and batch >= self.params['steps']-1):
-                    # in fit_generator just before evaluate_generator
-                    self.model.reset_states()
+        from keras.callbacks import EarlyStopping, ModelCheckpoint
+        from keras_train import fit_generator_autosized, evaluate_generator_autosized
         
         # Run training
         callbacks = [EarlyStopping(monitor='val_loss', patience=1, verbose=1, mode='min'),
                      ModelCheckpoint('s2s_last.h5', monitor='val_loss', # to be able to replay long epochs (crash/overfitting)
                                      save_best_only=True, save_weights_only=True, mode='min')]
         if self.stateful: # reset states between batches of different lines/documents (controlled by generator)
-            callbacks.append(ResetStatesCallback())
-        
+            reset_cb = self.ResetStatesCallback(self.encoder_model)
+            callbacks.append(reset_cb)
+        else:
+            reset_cb = None
+            
         # todo: shuffle lines
         # count how many batches the generator would return per epoch
         with open(filename, 'rb') as f:
             num_lines = sum(1 for line in f)
         split_rand = np.random.uniform(0, 1, (num_lines,)) # reserve split fraction at random line numbers
-        training_epoch_size = next(self.gen_data(filename, train=True, split=split_rand, get_size=True))
-        validation_epoch_size = next(self.gen_data(filename, train=False, split=split_rand, get_size=True))
-        self.encoder_decoder_model.fit_generator(self.gen_data(filename, train=True, split=split_rand, reset_cb=callbacks[-1]),
-                                                 steps_per_epoch=training_epoch_size, epochs=self.epochs,
-                                                 use_multiprocessing=True,
-                                                 validation_data=self.gen_data(filename, train=False, split=split_rand),
-                                                 validation_steps=validation_epoch_size, verbose=1, callbacks=callbacks)
+        fit_generator_autosized(self.encoder_decoder_model,
+                                self.gen_data(filename, train=True, split=split_rand, reset_cb=reset_cb),
+                                epochs=self.epochs,
+                                workers=1, # more than 1 would effectively increase epoch size
+                                use_multiprocessing=True,
+                                validation_data=self.gen_data(filename, train=False, split=split_rand, reset_cb=reset_cb),
+                                verbose=1,
+                                callbacks=callbacks,
+                                validation_callbacks=[reset_cb] if self.stateful else None)
         
-        self.state = 2
-    
+        self.status = 2
+
+    def evaluate(self, filename):
+        '''evaluate model on text file
+        
+        Pass the UTF-8 byte sequence of lines in `filename`, 
+        paired into source and target and aligned into fixed-length windows,
+        to a loop predicting outputs with decoder feedback and greedy+beam search.
+        The generator will open the file, looping over the complete set once,
+        printing source/target and predicted lines (recombining windows),
+        and the overall calculated character and word error rates of source (OCR)
+        and prediction (greedy/beamed) against target (GT).
+        (Data are always split by line, regardless of stateless/stateful mode.)
+        '''
+        assert self.status == 2
+        #would still be teacher forcing:
+        # loss = s2s.encoder_decoder_model.evaluate_generator_autosized(s2s.gen_data(filename))
+        # output = s2s.encoder_decoder_model.predict_generator_autosized(s2s.gen_data(filename))
+        counts = [1e-9, 0, 0, 0, 1e-9, 0, 0, 0]
+        for c in self.gen_data(filename, get_edits=True): # get counts of results for batch_size lines at a time
+            #bar.update(1)
+            for i in range(8):
+                counts[i] += c[i]
+
+        print("CER OCR: {}".format(counts[1] / counts[0]))
+        print("CER greedy: {}".format(counts[2] / counts[0]))
+        print("CER beamed: {}".format(counts[3] / counts[0]))
+        print("WER OCR: {}".format(counts[5] / counts[4]))
+        print("WER greedy: {}".format(counts[6] / counts[4]))
+        print("WER beamed: {}".format(counts[7] / counts[4]))
+
     def load_config(self, filename):
         '''Load parameters to prepare configuration/compilation.
 
@@ -692,7 +739,7 @@ class Sequence2Sequence(object):
         assert self.status > 1 # already trained
         self.encoder_decoder_model.save_weights(filename)
     
-    def decode_sequence_greedy(self, source_seq, source_state=None):
+    def decode_sequence_greedy(self, source_seq=None, source_state=None):
         '''Predict from one source vector window without alternatives.
         
         Use encoder input window vector `source_seq` (in a batch of size 1).
@@ -707,11 +754,11 @@ class Sequence2Sequence(object):
         #self.decoder_model.reset_states()
        
         # Encode the source as state vectors.
-        states_value = source_state if source_state else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
+        states_value = source_state if source_state != None else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
         
         # Generate empty target sequence of length 1.
         #target_seq = np.zeros((1, 1))
-        target_seq = np.zeros((1, 1, self.num_decoder_tokens))
+        target_seq = np.zeros((1, 1, self.num_decoder_tokens), dtype=np.int8)
         # Populate the first character of target sequence with the start character.
         #target_seq[0, 0, target_token_index['\t']-1] = 1.
         target_seq[0, 0, b'\t'[0]] = 1.
@@ -737,7 +784,7 @@ class Sequence2Sequence(object):
           
             # Update the target sequence (of length 1).
             #target_seq = np.zeros((1, 1))
-            target_seq = np.zeros((1, 1, self.num_decoder_tokens))
+            target_seq = np.zeros((1, 1, self.num_decoder_tokens), dtype=np.int8)
             #target_seq[0, 0] = sampled_token_index+1
             target_seq[0, 0, sampled_token_index] = 1.
             # feeding back the softmax vector directly vastly deteriorates predictions (because only identity vectors are presented during training)
@@ -748,7 +795,7 @@ class Sequence2Sequence(object):
         
         return decoded_text.strip(bytes([0])) # strip trailing but keep intermediate zero bytes
     
-    def decode_sequence_beam(self, source_seq, source_state=None):
+    def decode_sequence_beam(self, source_seq=None, source_state=None, eol=False):
         '''Predict from one source vector window with alternatives.
         
         Use encoder input window vector `source_seq` (in a batch of size 1).
@@ -773,14 +820,14 @@ class Sequence2Sequence(object):
         #self.encoder_model.reset_states()
         #self.decoder_model.reset_states()
         next_fringe = [Node(parent=None,
-                            state=source_state if source_state else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
+                            state=source_state if source_state != None else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
                             value=b'\t'[0], # start symbol byte
                             cost=0.0,
                             extras=decoder.getstate())]
         hypotheses = []
         
         # generator will raise StopIteration if hypotheses is still empty after loop
-        MAX_BATCHES = self.window_length*4 # how many batches (i.e. byte-hypotheses) will be processed per window?
+        MAX_BATCHES = self.window_length*3 # how many batches (i.e. byte-hypotheses) will be processed per window?
         for l in range(MAX_BATCHES):
             # try:
             #     next(n for n in next_fringe if all(np.array_equal(x,y) for x,y in zip(nonbeam_states[:l+1], [s.state for s in n.to_sequence()])))
@@ -789,12 +836,17 @@ class Sequence2Sequence(object):
             fringe = []
             while next_fringe:
                 n = next_fringe.pop()
-                if n.value == b'\n'[0] or n.length == self.window_length*2: # end-of-sequence symbol or window full?
-                    hypotheses.append(n)
-                    #print('found new solution', bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
+                if n.value == b'\n'[0]: # end-of-sequence symbol?
+                    if eol: # in last window?
+                        hypotheses.append(n)
+                        #print('found new solution "%s"' % bytes([i for i in n.to_sequence_of_values()]).rstrip(bytes([0])).decode("utf-8", "ignore"))
+                elif n.length == self.window_length*2: # window full?
+                    if not eol: # not last window?
+                        hypotheses.append(n)
+                        #print('found new solution "%s"' % bytes([i for i in n.to_sequence_of_values()]).rstrip(bytes([0])).decode("utf-8", "ignore"))
                 else: # normal step
                     fringe.append(n)
-                    #print('added new hypothesis', bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
+                    #print('added new hypothesis "%s"' % bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
                 if len(fringe) >= self.batch_size:
                     break # enough for one batch
             if len(hypotheses) >= self.beam_width_out:
@@ -803,18 +855,18 @@ class Sequence2Sequence(object):
                 break # will give StopIteration unless we have some results already
             
             # use fringe leaves as minibatch, but with only 1 timestep
-            target_seq = np.expand_dims(np.eye(256, dtype=np.float32)[[n.value for n in fringe], :], axis=1) # add time dimension
+            target_seq = np.expand_dims(np.eye(256, dtype=np.int8)[[n.value for n in fringe], :], axis=1) # add time dimension
             states_val = [np.vstack([n.state[layer] for n in fringe]) for layer in range(len(fringe[0].state))] # stack layers across batch
             output = self.decoder_model.predict_on_batch([target_seq] + states_val)
             scores_output = output[0][:,-1] # only last timestep
             scores_output_order = np.argsort(scores_output, axis=1) # still in reverse order (worst first)
-            #[:,-self.beam_width:] # for fixed beam width
             states_output = list(output[1:]) # from (layers) tuple
             for i, n in enumerate(fringe): # iterate over batch (1st dim)
                 scores = scores_output[i,:]
                 scores_order = scores_output_order[i,:]
                 highest = scores[scores_order[-1]]
-                beampos = 256 - np.searchsorted(scores[scores_order], 0.05 * highest) # variable beam width
+                beampos = 256 - np.searchsorted(scores[scores_order], 0.1 * highest) # variable beam width
+                #beampos = self.beam_width # fixed beam width
                 states = [layer[i:i+1] for layer in states_output] # unstack layers for current sample
                 logscores = -np.log(scores[scores_order])
                 pos = 0
@@ -839,6 +891,34 @@ class Sequence2Sequence(object):
             byteseq = bytes(indices[1:]).strip(bytes([0])) # strip trailing but keep intermediate zero bytes
             yield byteseq
     
+    class ResetStatesCallback(Callback):
+        '''Keras callback for stateful models to reset state between files.
+        
+        Callback to be called by `fit_generator()` or even `evaluate_generator()`:
+        do `model.reset_states()` whenever generator sees EOF (on_batch_begin with self.eof),
+        and between training and validation (on_batch_end with batch>=steps_per_epoch-1).
+        '''
+        def __init__(self, callback_model):
+            self.eof = False
+            self.here = ''
+            self.next = ''
+            self.callback_model = callback_model # different than self.model set by set_model()
+        
+        def reset(self, where):
+            self.eof = True
+            self.next = where
+        
+        def on_batch_begin(self, batch, logs={}):
+            if self.eof:
+                #print('resetting model at batch', batch, 'for train:', self.params['do_validation'])
+                # between training files
+                self.callback_model.reset_states() # reset only encoder (training does not converge if applied to complete encoder-decoder)
+                self.eof = False
+                self.here = self.next
+        
+        def on_batch_end(self, batch, logs={}):
+            if logs.get('loss') > 10:
+                print('huge loss in', self.here, 'at', batch)
 
 
 class Node(object):
@@ -882,15 +962,17 @@ class Node(object):
         return other._norm_cost > self._norm_cost
     def __ge__(self, other):
         return other._norm_cost >= self._norm_cost
-    
 
 s2s = Sequence2Sequence()
 vocabulary = Vocabulary() # merely for byte alignment of input lines (for windowing)
 scoring = SimpleScoring(2,-1) # match score, mismatch score
 aligner = StrictGlobalSequenceAligner(scoring,-2) # gap score
 
-data_path = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.augmented.txt' # training and validation set csv
-data_path2 = '../../daten/dta19-reduced/testdata.Fraktur4-gt.filtered.txt' # test set csv
+# training+validation and evaluation sets (csv files: tab-separated lines)
+traindata_augmented = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.augmented.txt' # mixed GT (clean) and OCR (noisy) source text
+traindata_gt = '../../daten/dta19-reduced/traindata.gt-gt.txt' # GT-only (clean) source text (for pretraining)
+traindata_ocr = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
+testdata_ocr = '../../daten/dta19-reduced/testdata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
 
 model_filename = 's2s.Fraktur4.d%d.w%04d.h5' % (s2s.depth, s2s.width)
 if len(sys.argv) > 1:
@@ -908,7 +990,10 @@ if isfile(config_filename) and isfile(model_filename):
     s2s.load_weights(model_filename)
 else:
     s2s.configure()
-    s2s.train(data_path)
+    # s2s.train(traindata_augmented)
+    s2s.train(traindata_gt)
+    s2s.decoder_model.trainable = False # seems to have no effect
+    s2s.train(traindata_ocr)
     
     # Save model
     print('Saving model', model_filename, config_filename)
@@ -917,46 +1002,17 @@ else:
         rename('s2s_last.h5', model_filename)
     else:
         s2s.save_weights(model_filename)
+    
+    s2s.evaluate(testdata_ocr)
 
 
-#with open(other_path, 'rb') as f:
-#    loss = s2s.encoder_decoder_model.evaluate_generator(gen_data(f), workers=4, verbose=1)
-#    print('Test loss:', loss)
-#would be greedy:
-#output = s2s.encoder_decoder_model.predict_on_generator(gen_data(data_path2))
+# reconfigure to make encoder accept only 1 line at a time for interactive testing
 if s2s.stateful: # encoder stateful?
-    s2s.configure(batch_size=1) # reconfigure to make encoder only accept 1 line at a time
-c_total = 0
-c_edits_ocr = 0
-c_edits_greedy = 0
-c_edits_beamed = 0
-w_total = 0
-w_edits_ocr = 0
-w_edits_greedy = 0
-w_edits_beamed = 0
-#epoch_size = next(s2s.gen_data(data_path2, batch_size=1, get_edits=True, get_size=True))
-#with click.progressbar(length=epoch_size) as bar:
-for (c_total_batch, c_edits_ocr_batch, c_edits_greedy_batch, c_edits_beamed_batch,
-     w_total_batch, w_edits_ocr_batch, w_edits_greedy_batch, w_edits_beamed_batch) \
-     in s2s.gen_data(data_path2, batch_size=1, get_edits=True): # get windows for only 1 line at a time
-    #bar.update(1)
-    c_total += c_total_batch
-    c_edits_ocr += c_edits_ocr_batch
-    c_edits_greedy += c_edits_greedy_batch
-    c_edits_beamed += c_edits_beamed_batch
-    w_total += w_total_batch
-    w_edits_ocr += w_edits_ocr_batch
-    w_edits_greedy += w_edits_greedy_batch
-    w_edits_beamed += w_edits_beamed_batch
-
-print("CER OCR: {}".format(c_edits_ocr / c_total))
-print("CER greedy: {}".format(c_edits_greedy / c_total))
-print("CER beamed: {}".format(c_edits_beamed / c_total))
-print("WER OCR: {}".format(w_edits_ocr / w_total))
-print("WER greedy: {}".format(w_edits_greedy / w_total))
-print("WER beamed: {}".format(w_edits_beamed / w_total))
-
-def encode_text(source_text):
+    pass # re-configuration to batch_size 1 does not work, would break internal encoder updates (extend to full batch_size instead below)
+else:
+    s2s.configure(batch_size=1)
+    
+def transcode_line(source_line):
     # source_sequence = np.zeros((1, max_encoder_seq_length, s2s.num_encoder_tokens), dtype='float32')
     # for t, char in enumerate(source_text):
     #     source_sequence[0, t, source_token_index[char]] = 1
@@ -965,6 +1021,27 @@ def encode_text(source_text):
     #return to_categorical(pad_sequences([list(map(bytearray,source_text))], maxlen=max_encoder_seq_length, padding='pre'), num_classes=s2s.num_encoder_tokens+1)[:,:,1:] # remove separate dimension for zero/padding
     #return to_categorical(list(map(bytearray,[source_text + b'\n'])), num_classes=s2s.num_encoder_tokens+1)[:,:,1:]
     #return bytearray(source_text+b'\n')
-    return np.eye(256, dtype=np.float32)[bytearray(source_text+b'\n'),:]
+    #return np.eye(256, dtype=np.float32)[bytearray(source_text+b'\n'),:]
+    s2s.encoder_model.reset_states() # new line
+    source_windows = [[]]
+    for source_char in source_line + u'\n':
+        source_bytes = source_char.encode('utf-8')
+        source_len = len(source_bytes)
+        if len(source_windows[-1])+source_len >= s2s.window_length:
+            source_windows[-1].extend([0]*(s2s.window_length-len(source_windows[-1]))) # so np.eye works for learned zero-padding
+            source_windows.append([])
+        source_windows[-1].extend(source_bytes)
+    source_windows[-1].extend([0]*(s2s.window_length-len(source_windows[-1]))) # so np.eye works for learned zero-padding
+    target_line = u''
+    for source_window in source_windows:
+        source_seq = np.expand_dims(np.eye(256, dtype=np.int8)[list(bytearray(source_window)),:], axis=0) # add batch dimension
+        if s2s.stateful:
+            source_seq = np.repeat(source_seq, s2s.batch_size, axis=0) # repeat to full batch size
+        source_states = s2s.encoder_model.predict_on_batch(source_seq) # get encoder output
+        source_state = [layer[0:1] for layer in source_states] # get layer list for only 1 line
+        #target_line += next(s2s.decode_sequence_beamed(source_state=source_state, eol=(b'\n' in source_window))).decode('utf-8', 'strict')
+        target_line += s2s.decode_sequence_greedy(source_state=source_state).decode('utf-8', 'ignore')
+    return target_line
+        
 
-print("usage example:\n# for reading in s2s.decode_sequence_beam(encode_text(b'hello world!')):\n#     print(reading.decode('utf-8'))")
+print("usage example:\n# transcode_line(u'hello world!')\n# s2s.evaluate('%s')" % testdata_ocr)
