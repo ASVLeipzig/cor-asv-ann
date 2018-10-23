@@ -16,12 +16,6 @@ import codecs
 import numpy as np
 # these should all be wrapped in functions:
 import pickle, click
-from editdistance import eval as edit_eval
-import alignment.sequence
-alignment.sequence.GAP_ELEMENT = 0 # override default
-from alignment.sequence import Sequence, GAP_ELEMENT
-from alignment.vocabulary import Vocabulary
-from alignment.sequencealigner import SimpleScoring, StrictGlobalSequenceAligner
 import threading
 from keras.callbacks import Callback
 
@@ -167,10 +161,6 @@ class Sequence2Sequence(object):
 
     Features still (very much) wanting of implementation:
 
-    - more efficient training loop avoiding fit_generator(): 
-      not requiring steps_per_epoch/validation_steps beforehand
-      (but instead keeping to loop until StopIteration), 
-      and allowing reset callback in validation loop, too
     - attention or at least peeking (not just final-initial transfer)
     - stateful decoder mode (in non-transfer part of state function)
     - systematic hyperparameter treatment (deviations from Sutskever
@@ -254,6 +244,66 @@ class Sequence2Sequence(object):
         - number of batches if `get_size`,
         - vector data batches (for fit_generator/evaluate_generator) otherwise.
         '''
+        # alignment for evaluation only...
+        from editdistance import eval as edit_eval
+
+        # alignment for windowing...
+        ## python-alignment is impractical with long or heavily deviating sequences (see github issues 9, 10, 11):
+        #import alignment.sequence
+        #alignment.sequence.GAP_ELEMENT = 0 # override default
+        #from alignment.sequence import Sequence, GAP_ELEMENT
+        #from alignment.vocabulary import Vocabulary
+        #from alignment.sequencealigner import SimpleScoring, StrictGlobalSequenceAligner
+        # Levenshtein scoring:
+        #scoring = SimpleScoring(2,-1) # match score, mismatch score
+        #aligner = StrictGlobalSequenceAligner(scoring,-2) # gap score
+        # Levenshtein-like scoring with 0.1 distance within typical OCR confusion classes (to improve alignment quality; to reduce error introduced by windowing):
+        # class OCRScoring(SimpleScoring):
+        #     def __init__(self):
+        #         super(OCRScoring, self).__init__(0,-1) # match score, mismatch score (Levenshtein-like)
+        #         self.classes = [[u"a", u"ä", u"á", u"â", u"à", u"ã"],
+        #                         [u"o", u"ö", u"ó", u"ô", u"ò", u"õ"],
+        #                         [u"u", u"ü", u"ú", u"û", u"ù", u"ũ"],
+        #                         [u"A", u"Ä", u"Á", u"Â", u"À", u"Ã"],
+        #                         [u"O", u"Ö", u"Ó", u"Ô", u"Ò", u"Õ"],
+        #                         [u"U", u"Ü", u"Ú", u"Û", u"Ù", u"Ũ"],
+        #                         [0, u"ͤ"],
+        #                         [u'"', u"“", u"‘", u"'", u"’", u"”"],
+        #                         [u',', u'‚', u'„'],
+        #                         [u'-', u'‐', u'—', u'–', u'_'],
+        #                         [u'=', u'⸗', u'⹀'],
+        #                         [u'ſ', u'f', u'ß'], #s?
+        #                         [u"c", u"<", u"e"]]
+        #         self.table = {}
+        #         for c in self.classes:
+        #             for i in c:
+        #                 for j in c:
+        #                     if i==j:
+        #                         self.table[(i,j)] = 0.0
+        #                     else:
+        #                         self.table[(i,j)] = 0.1
+        #     def __call__(self, firstElement, secondElement):
+        #         if (firstElement,secondElement) in self.table:
+        #             return self.table[(firstElement,secondElement)]
+        #         else:
+        #             return super(OCRScoring, self).__call__(firstElement, secondElement)
+        # 
+        # scoring = OCRScoring()
+        # aligner = StrictGlobalSequenceAligner(scoring,-1) # gap score
+        
+        ## difflib is optimised for visual comparisons (Ratcliff-Obershelp), not minimal distance (Levenshtein):
+        from difflib import SequenceMatcher
+        matcher = SequenceMatcher(isjunk=None, autojunk=False)
+        
+        ## edit_distance is impractical with long sequences, even if very similar (GT lines > 1000 characters, see github issue 6)
+        # from edit_distance.code import SequenceMatcher # similar API to difflib.SequenceMatcher
+        # def char_similar(a, b):
+        #     return (a == b or (a,b) in table)
+        # matcher = SequenceMatcher(test=char_similar)
+        
+        ## edlib does not work on Unicode (non-ASCII strings)
+        # import edlib
+        
         if not batch_size:
             if self.stateful:
                 batch_size = self.batch_size # cannot reduce to 1 here (difference to training would break internal encoder updates)
@@ -266,10 +316,18 @@ class Sequence2Sequence(object):
         
         lock = threading.Lock()
         with open(filename, 'rb') as f:
+            epoch = 0
+            if filename.endswith('.pkl'):
+                f = pickle.load(f) # read once
             while True:
                 if not remainder_pass:
                     source_lines = []
                     target_lines = []
+                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                        sourceconf_lines = []
+                    epoch += 1
+                if not filename.endswith('.pkl'):
+                    f.seek(0) # read again
                 batch_no = 0
                 for line_no, line in enumerate(f):
                     if isinstance(split, np.ndarray) and (split[line_no] < split_ratio) == train:
@@ -284,17 +342,90 @@ class Sequence2Sequence(object):
                                 #self.encoder_decoder_model.reset_states() # does not work for some reason (never returns, even if passing tf_session.as_default() and tf_graph.as_default())
                                 self.encoder_model.reset_states()
                                 #self.decoder_model.reset_states() # not stateful yet
-                    source_text, target_text = line.split(b'\t')
-                    source_text = source_text.decode('utf-8', 'strict') + u'\n' # add end-of-sequence
-                    target_text = target_text.decode('utf-8', 'strict') # start-of-sequence will be added window by window, end-of-sequence already preserved by file iterator
+                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                        source_conf, target_text = line # already includes end-of-sequence
+                        source_text = u''.join([char for char, prob in source_conf])
+                    else:
+                        source_text, target_text = line.split(b'\t')
+                        source_text = source_text.decode('utf-8', 'strict') + u'\n' # add end-of-sequence
+                        target_text = target_text.decode('utf-8', 'strict') # start-of-sequence will be added window by window, end-of-sequence already preserved by file iterator
                     
                     # byte-align source and target text line, shelve them into successive fixed-size windows
-                    source_seq = vocabulary.encodeSequence(Sequence(source_text))
-                    target_seq = vocabulary.encodeSequence(Sequence(target_text))
-                    score, alignments = aligner.align(source_seq, target_seq, backtrace=True)
-                    alignment1 = vocabulary.decodeSequenceAlignment(alignments[0])
+                    GAP_ELEMENT = 0
+                    ## code for python_alignment:
+                    #vocabulary = Vocabulary() # inefficient, but helps keep search space smaller if independent for each line
+                    #source_seq = vocabulary.encodeSequence(Sequence(source_text))
+                    #target_seq = vocabulary.encodeSequence(Sequence(target_text))
+                    #score = aligner.align(source_seq, target_seq)
+                    #if train and score < -10 and score < 5-len(source_text):
+                    #    #print('ignoring line (%d/%d)):' % (score, len(source_text)))
+                    #    #print(source_text, end='')
+                    #    #print(target_text, end='')
+                    #    continue # avoid training if OCR is too bad
+                    #score, alignments = aligner.align(source_seq, target_seq, backtrace=True)
+                    #alignment1 = vocabulary.decodeSequenceAlignment(alignments[0])
                     #print ('alignment score:', alignment1.score)
                     #print ('alignment rate:', alignment1.percentIdentity())
+
+                    ## code for difflib/edit_distance:
+                    # matcher = difflib_matcher if len(source_text) > 4000 or len(target_text) > 4000 else editdistance_matcher
+                    matcher.set_seqs(source_text, target_text)
+                    # if train and matcher.distance() > 10 and matcher.distance() > len(source_text)-5:
+                    if train and matcher.quick_ratio() < 0.5 and len(source_text) > 5:
+                        continue # avoid training if OCR was too bad
+                    alignment1 = []
+                    for op, source_begin, source_end, target_begin, target_end in matcher.get_opcodes():
+                        if op == 'equal':
+                            alignment1.extend(zip(source_text[source_begin:source_end], target_text[target_begin:target_end]))
+                        elif op == 'replace': # not really substitution:
+                            delta = source_end-source_begin-target_end+target_begin
+                            #alignment1.extend(zip(source_text[source_begin:source_end] + [GAP_ELEMENT]*(-delta), target_text[target_begin:target_end] + [GAP_ELEMENT]*(delta)))
+                            if delta > 0: # replace+delete
+                                alignment1.extend(zip(source_text[source_begin:source_end-delta], target_text[target_begin:target_end]))
+                                alignment1.extend(zip(source_text[source_end-delta:source_end], [GAP_ELEMENT]*(delta)))
+                            if delta <= 0: # replace+insert
+                                alignment1.extend(zip(source_text[source_begin:source_end], target_text[target_begin:target_end+delta]))
+                                alignment1.extend(zip([GAP_ELEMENT]*(-delta), target_text[target_end+delta:target_end]))
+                        elif op == 'insert':
+                            alignment1.extend(zip([GAP_ELEMENT]*(target_end-target_begin), target_text[target_begin:target_end]))
+                        elif op == 'delete':
+                            alignment1.extend(zip(source_text[source_begin:source_end], [GAP_ELEMENT]*(source_end-source_begin)))
+                        else:
+                            raise Exception("difflib returned invalid opcode", op, "in", line)
+                    assert source_end == len(source_text)
+                    assert target_end == len(target_text)
+                    ## code for edlib:
+                    # edres = edlib.align(source_text, target_text, mode='NW', task='path', k=max(len(source_text),len(target_text))*2)
+                    # if edres['editDistance'] < 0:
+                    #     print(line)
+                    #     continue
+                    # alignment1 = []
+                    # n = ""
+                    # source_k = 0
+                    # target_k = 0
+                    # for c in edres['cigar']:
+                    #     if c.isdigit():
+                    #         n = n + c
+                    #     else:
+                    #         i = int(n)
+                    #         n = ""
+                    #         if c in "=X": # identity/substitution
+                    #             alignment1.extend(zip(source_text[source_k:source_k+i], target_text[target_k:target_k+i]))
+                    #             source_k += i
+                    #             target_k += i
+                    #         elif c == "I": # insert into target
+                    #             alignment1.extend(zip(source_text[source_k:source_k+i], [GAP_ELEMENT]*i))
+                    #             source_k += i
+                    #         elif c == "D": # delete from target
+                    #             alignment1.extend(zip([GAP_ELEMENT]*i, target_text[target_k:target_k+i]))
+                    #             target_k += i
+                    #         else:
+                    #             raise Exception("edlib returned invalid CIGAR opcode", c)
+                    # assert source_k == len(source_text)
+                    # assert target_k == len(target_text)
+                    
+                    ## code for identity alignment (for GT-only training; faster, no memory overhead)
+                    # alignment1 = zip(source_text, target_text)
                     
                     # Produce batches of training data:
                     # - fixed `batch_size` lines (each line post-padded to maximum window multiple among batch)
@@ -309,72 +440,87 @@ class Sequence2Sequence(object):
                     # Try to always fit umlauts and certain other similar pairs in the same window,
                     # i.e. pay special attention if they have different byte lengths.
                     # Or is this precaution unnecessary when stateful?
-                    umlauts = {u"a": u"ä", u"o": u"ö", u"u": u"ü", u"A": u"Ä", u"O": u"Ä", u"U": u"Ü",
-                               u"ä": u"aͤ", u"ö": u"oͤ", u"ü": u"uͤ", u"Ä": u"Aͤ", u"Ö": u"Oͤ", u"Ü": u"uͤ",
-                               u'"': u"“", u"“": u"‘‘", u"‘": u"“",
-                               u"'": u"’", u"’": u"”", u"”": u"’’",
-                               u',': u'‚', u'‚': u'„', u'„': u'‚‚',
-                               u'-': u'‐', u'‐': u'‐', u'‐': u'-', u'—': u'-', u'–': u'-',
-                               u'=': u'⸗', u'⸗': u'⹀', u'⹀': u'=',
-                               u'ſ': u'f', u'ß': u'ſs', u's': u'ſ', 
-                               u'ã': u'ã', u'ẽ': u'ẽ', u'ĩ': u'ĩ', u'õ': u'õ', u'ñ': u'ñ', u'ũ': u'ũ', u'ṽ': u'ṽ', u'ỹ': u'ỹ',
-                               # how about diacritical characters vs combining diacritical marks?
-                               u'k': u'ft' }
+                    # umlauts = {u"a": u"ä", u"o": u"ö", u"u": u"ü", u"A": u"Ä", u"O": u"Ä", u"U": u"Ü",
+                    #            u"ä": u"aͤ", u"ö": u"oͤ", u"ü": u"uͤ", u"Ä": u"Aͤ", u"Ö": u"Oͤ", u"Ü": u"uͤ",
+                    #            u'"': u"“", u"“": u"‘‘", u"‘": u"“",
+                    #            u"'": u"’", u"’": u"”", u"”": u"’’",
+                    #            u',': u'‚', u'‚': u'„', u'„': u'‚‚',
+                    #            u'-': u'‐', u'‐': u'‐', u'‐': u'-', u'—': u'--', u'–': u'-',
+                    #            u'=': u'⸗', u'⸗': u'⹀', u'⹀': u'=',
+                    #            u'ſ': u'f', u'ß': u'ſs', u's': u'ſ', 
+                    #            u'ã': u'ã', u'ẽ': u'ẽ', u'ĩ': u'ĩ', u'õ': u'õ', u'ñ': u'ñ', u'ũ': u'ũ', u'ṽ': u'ṽ', u'ỹ': u'ỹ',
+                    #            # how about diacritical characters vs combining diacritical marks?
+                    #            u'k': u'ft' }
                     try:
-                        i = 0
-                        j = 0
                         source_windows = [[]]
                         target_windows = [[b'\t'[0]]]
-                        last_source_len = 0
-                        last_target_len = 0
+                        i = 0
+                        j = 1
+                        if filename.endswith('.pkl'): # binary input with OCR confidence?
+                            sourceconf_windows = [[]]
+                            k = 0
                         for source_char, target_char in alignment1:
                             source_bytes = source_char.encode('utf-8') if source_char != GAP_ELEMENT else b''
                             target_bytes = target_char.encode('utf-8') if target_char != GAP_ELEMENT else b''
                             source_len = len(source_bytes)
                             target_len = len(target_bytes)
-                            if source_char != GAP_ELEMENT:
-                                if i+source_len >= self.window_length:
-                                    if j == 1 and len(source_windows) > 1: # empty target window?
-                                        # move last char from both previous windows to current
-                                        last_source_window_last_len = len(bytes(source_windows[-2]).decode('utf-8')[-1].encode('utf-8'))
-                                        last_target_window_last_len = len(bytes(target_windows[-2]).decode('utf-8')[-1].encode('utf-8'))
-                                        source_windows[-1] = source_windows[-2][-last_source_window_last_len:] + source_windows[-1]
-                                        target_windows[-1] = target_windows[-2][-last_target_window_last_len:] + target_windows[-1]
-                                        source_windows[-2] = source_windows[-2][:-last_source_window_last_len]
-                                        target_windows[-2] = target_windows[-2][:-last_target_window_last_len]
-                                        # make new window with current char from source window
-                                        source_windows.append([])
-                                        target_windows.append([b'\t'[0]]) # add start-of-sequence (for this window)
-                                        source_windows[-1].extend(source_windows[-2][-last_source_len:])
-                                        source_windows[-2] = source_windows[-2][:-last_source_len]
-                                        i = last_source_len
-                                        j = 1
-                                    else:
-                                        i = 0
-                                        j = 1
-                                        source_windows.append([])
-                                        target_windows.append([b'\t'[0]]) # add start-of-sequence (for this window)
-                                source_windows[-1].extend(source_bytes)
-                                i += source_len
-                            if target_char != GAP_ELEMENT:
-                                if j+target_len >= self.window_length*2:
-                                    if i == 0: # empty source window?
-                                        raise Exception("target window does not fit twice the source window in alignment", alignment1, line.decode("utf-8"), source_windows, target_windows)
+                            if i+source_len > self.window_length -3 or j+target_len > self.window_length*1+1 -3: # window already full?
+                                # or source_char == u' ' or target_char == u' '
+                                if train and i == 0 and len(bytes(target_windows[-1]).decode('utf-8', 'strict').strip(u'—-. \t')) > 0: # empty source window, and not just line art in target window?
+                                    raise Exception("target window does not fit twice the source window in alignment", alignment1, list(map(lambda l: bytes(l).decode('utf-8'),source_windows)), list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")
+                                if train and j == 1 and len(bytes(source_windows[-1]).decode('utf-8', 'strict').strip(u'—-. ')) > 0: # empty target window, and not just line art in source window?
+                                    raise Exception("source window does not fit half the target window in alignment", alignment1, list(map(lambda l: bytes(l).decode('utf-8'),source_windows)), list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")
+                                if i > self.window_length:
+                                    raise Exception("source window too long", i, j, list(map(lambda l: bytes(l).decode('utf-8'),source_windows)), list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")
+                                if j > self.window_length*1+1:
+                                    raise Exception("target window too long", i, j, list(map(lambda l: bytes(l).decode('utf-8'),source_windows)), list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")                                
+                                # make new window
+                                if (i > 0 and j > 1 and
+                                    (source_char == GAP_ELEMENT and u'—-. '.find(target_char) < 0 or
+                                     target_char == GAP_ELEMENT and u'—-. '.find(source_char) < 0)):
+                                    # move last char from both current windows to new ones
+                                    source_window_last_len = len(bytes(source_windows[-1]).decode('utf-8', 'strict')[-1].encode('utf-8'))
+                                    target_window_last_len = len(bytes(target_windows[-1]).decode('utf-8', 'strict')[-1].encode('utf-8'))
+                                    source_windows.append(source_windows[-1][-source_window_last_len:])
+                                    target_windows.append([b'\t'[0]] + target_windows[-1][-target_window_last_len:])
+                                    source_windows[-2] = source_windows[-2][:-source_window_last_len]
+                                    target_windows[-2] = target_windows[-2][:-target_window_last_len]
+                                    i = source_window_last_len
+                                    j = target_window_last_len + 1
+                                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                                        sourceconf_windows.append(sourceconf_windows[-1][-source_window_last_len:])
+                                        sourceconf_windows[-2] = sourceconf_windows[-2][:-source_window_last_len]
+                                else:
                                     i = 0
                                     j = 1
                                     source_windows.append([])
                                     target_windows.append([b'\t'[0]]) # add start-of-sequence (for this window)
+                                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                                        sourceconf_windows.append([])
+                            if source_char != GAP_ELEMENT:
+                                source_windows[-1].extend(source_bytes)
+                                i += source_len
+                                if filename.endswith('.pkl'): # binary input with OCR confidence?
+                                    assert source_char == source_conf[k][0], "characters from alignment and from confidence tuples out of sync at {} in \"{}\" \"{}\": {}".format(k, source_text, target_text, alignment1)
+                                    sourceconf_windows[-1].extend(source_len*[source_conf[k][1]])
+                                    k += 1
+                            if target_char != GAP_ELEMENT:
                                 target_windows[-1].extend(target_bytes)
                                 j += target_len
-                            last_source_len = source_len
-                            last_target_len = target_len
-                        if j >= self.window_length*2:
-                            raise Exception("target window does not fit twice the source window in alignment", alignment1, line.decode("utf-8"), source_windows, target_windows)
                     except Exception as e:
-                        print(e)
-                    
+                        if epoch == 1:
+                            print('\x1b[2K\x1b[G', end='') # erase (progress bar) line and go to start of line
+                            print('windowing error: ', end='')
+                            print(e)
+                        # rid of the offending window, but keep the previous ones:
+                        source_windows.pop()
+                        target_windows.pop()
+                        if filename.endswith('.pkl'): # binary input with OCR confidence?
+                            sourceconf_windows.pop()
                     source_lines.append(source_windows)
                     target_lines.append(target_windows)
+                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                        sourceconf_lines.append(sourceconf_windows)
                     
                     if len(source_lines) == batch_size: # end of batch
                         max_windows = max([len(line) for line in source_lines])                
@@ -397,14 +543,16 @@ class Sequence2Sequence(object):
                             # vectorize
                             encoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in source_lines]))
                             decoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in target_lines]))
+                            if filename.endswith('.pkl'): # binary input with OCR confidence?
+                                encoder_conf_sequences = [line[i] if len(line)>i else [] for line in sourceconf_lines]
                             # with windowing, we cannot use pad_sequences for zero-padding any more, 
                             # because zero bytes are a valid decoder input or output now (and different from zero input or output):
                             #encoder_input_sequences = pad_sequences(encoder_input_sequences, maxlen=self.window_length, padding='post')
                             #decoder_input_sequences = pad_sequences(decoder_input_sequences, maxlen=self.window_length*2, padding='post')
                             #encoder_input_data = np.eye(256, dtype=np.float32)[encoder_input_sequences,:]
                             #decoder_input_data = np.eye(256, dtype=np.float32)[decoder_input_sequences,:]
-                            encoder_input_data = np.zeros((batch_size, self.window_length, self.num_encoder_tokens), dtype=np.int8)
-                            decoder_input_data = np.zeros((batch_size, self.window_length*2, self.num_decoder_tokens), dtype=np.int8)
+                            encoder_input_data = np.zeros((batch_size, self.window_length, self.num_encoder_tokens), dtype=np.float32 if filename.endswith('.pkl') else np.int8)
+                            decoder_input_data = np.zeros((batch_size, self.window_length*1+1, self.num_decoder_tokens), dtype=np.int8)
                             for j, (enc_seq, dec_seq) in enumerate(zip(encoder_input_sequences, decoder_input_sequences)):
                                 if not len(enc_seq):
                                     continue # empty window (i.e. j-th line is shorter than others): true zero-padding (masked)
@@ -413,6 +561,10 @@ class Sequence2Sequence(object):
                                     encoder_input_data[j*np.ones(len(enc_seq), dtype=np.int8), 
                                                        np.arange(len(enc_seq), dtype=np.int8), 
                                                        np.array(enc_seq, dtype=np.int8)] = 1
+                                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                                        encoder_input_data[j*np.ones(len(enc_seq), dtype=np.int8), 
+                                                           np.arange(len(enc_seq), dtype=np.int8), 
+                                                           np.array(enc_seq, dtype=np.int8)] = np.array(encoder_conf_sequences[j], dtype=np.float32)
                                     # zero bytes in encoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
                                     padlen = self.window_length - len(enc_seq)
                                     encoder_input_data[j*np.ones(padlen, dtype=np.int8), 
@@ -423,9 +575,9 @@ class Sequence2Sequence(object):
                                                        np.arange(len(dec_seq), dtype=np.int8), 
                                                        np.array(dec_seq, dtype=np.int8)] = 1
                                     # zero bytes in decoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
-                                    padlen = self.window_length*2 - len(dec_seq)
+                                    padlen = self.window_length*1+1 - len(dec_seq)
                                     decoder_input_data[j*np.ones(padlen, dtype=np.int8), 
-                                                       np.arange(len(dec_seq), self.window_length*2, dtype=np.int8), 
+                                                       np.arange(len(dec_seq), self.window_length*1+1, dtype=np.int8), 
                                                        np.zeros(padlen, dtype=np.int8)] = 1
                             # teacher forcing:
                             decoder_output_data = np.roll(decoder_input_data,-1,axis=1).astype(np.float32) # output data will be ahead by 1 timestep
@@ -497,9 +649,12 @@ class Sequence2Sequence(object):
                         lock.release()
                         source_lines = []
                         target_lines = []
+                        if filename.endswith('.pkl'): # binary input with OCR confidence?
+                            sourceconf_lines = []
                 
                 if get_size: # return size, do not loop
                     yield batch_no
+                    break
                 elif get_edits: # do not loop
                     if source_lines and not remainder_pass: # except if partially filled batch remains
                         # re-enter loop once, adding just enough lines to complete batch
@@ -509,12 +664,10 @@ class Sequence2Sequence(object):
                         split_ratio = (batch_size*1.5 - len(source_lines)) / (line_no+1) # slightly larger than exact ratio to ensure we will get enough lines (a little more does no harm)
                         print('wrapping around after %d lines to get %d more lines for last batch with a random split ratio of %.2f' % (line_no+1, batch_size-len(source_lines), split_ratio))
                         remainder_pass = True # throw away next time we get here
-                        f.seek(0) # make sure the generator can wrap around
                     else:
                         break
                 else:
                     yield False
-                    f.seek(0) # make sure the generator can wrap around
 
     def configure(self, batch_size=None):
         '''Define and compile encoder and decoder models for the configured parameters.
@@ -709,6 +862,7 @@ class Sequence2Sequence(object):
         config = pickle.load(open(filename, mode='rb'))
         self.width = config['width']
         self.depth = config['depth']
+        self.window_length = config['length'] if 'length' in config else 7 # old default
         self.stateful = config['stateful']
     
     def save_config(self, filename):
@@ -717,7 +871,7 @@ class Sequence2Sequence(object):
         Save configured model parameters into `filename`.
         '''
         assert self.status > 0 # already compiled
-        config = {'width': self.width, 'depth': self.depth, 'stateful': self.stateful}
+        config = {'width': self.width, 'depth': self.depth, 'length': self.window_length, 'stateful': self.stateful}
         pickle.dump(config, open(filename, mode='wb'))
     
     def load_weights(self, filename):
@@ -767,7 +921,7 @@ class Sequence2Sequence(object):
         # Sampling loop for a batch of sequences
         # (to simplify, here we assume a batch of size 1).
         decoded_text = b''
-        for i in range(1, self.window_length*2):
+        for i in range(1, self.window_length*1):
             output = self.decoder_model.predict_on_batch([target_seq] + states_value)
             output_scores = output[0]
             output_states = output[1:]
@@ -840,7 +994,7 @@ class Sequence2Sequence(object):
                     if eol: # in last window?
                         hypotheses.append(n)
                         #print('found new solution "%s"' % bytes([i for i in n.to_sequence_of_values()]).rstrip(bytes([0])).decode("utf-8", "ignore"))
-                elif n.length == self.window_length*2: # window full?
+                elif n.length == self.window_length*1+1: # window full?
                     if not eol: # not last window?
                         hypotheses.append(n)
                         #print('found new solution "%s"' % bytes([i for i in n.to_sequence_of_values()]).rstrip(bytes([0])).decode("utf-8", "ignore"))
@@ -964,17 +1118,25 @@ class Node(object):
         return other._norm_cost >= self._norm_cost
 
 s2s = Sequence2Sequence()
-vocabulary = Vocabulary() # merely for byte alignment of input lines (for windowing)
-scoring = SimpleScoring(2,-1) # match score, mismatch score
-aligner = StrictGlobalSequenceAligner(scoring,-2) # gap score
 
 # training+validation and evaluation sets (csv files: tab-separated lines)
-traindata_augmented = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.augmented.txt' # mixed GT (clean) and OCR (noisy) source text
 traindata_gt = '../../daten/dta19-reduced/traindata.gt-gt.txt' # GT-only (clean) source text (for pretraining)
-traindata_ocr = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
-testdata_ocr = '../../daten/dta19-reduced/testdata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
+traindata_gt_large = '../../daten/dta19-reduced/dta_komplett_2017-09-01.18xy.rand300k.gt-gt.txt'
+#traindata_ocr = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
+traindata_ocr = '../../daten/dta19-reduced/traindata.Fraktur4-gt.pkl' # OCR-only (noisy) source text
+#traindata_ocr = '../../daten/dta19-reduced/traindata.foo4-gt.filtered.txt' # OCR-only (noisy) source text
+#traindata_ocr = '../../daten/dta19-reduced/traindata.deu-frak3-gt.filtered.txt' # OCR-only (noisy) source text
+#traindata_ocr = '../../daten/dta19-reduced/traindata.ocrofraktur-gt.filtered.txt' # OCR-only (noisy) source text
+#traindata_ocr = '../../daten/dta19-reduced/traindata.ocrofraktur-jze-gt.filtered.txt' # OCR-only (noisy) source text
+#testdata_ocr = '../../daten/dta19-reduced/testdata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
+testdata_ocr = '../../daten/dta19-reduced/testdata.Fraktur4-gt.pkl' # OCR-only (noisy) source text
+#testdata_ocr = '../../daten/dta19-reduced/testdata.foo4-gt.filtered.txt' # OCR-only (noisy) source text
+#testdata_ocr = '../../daten/dta19-reduced/testdata.deu-frak3-gt.filtered.txt' # OCR-only (noisy) source text
+#testdata_ocr = '../../daten/dta19-reduced/testdata.ocrofraktur-gt.filtered.txt' # OCR-only (noisy) source text
+#testdata_ocr = '../../daten/dta19-reduced/testdata.ocrofraktur-jze-gt.filtered.txt' # OCR-only (noisy) source text
 
-model_filename = 's2s.Fraktur4.d%d.w%04d.h5' % (s2s.depth, s2s.width)
+model = traindata_ocr.split("/")[-1].split(".")[1].split("-")[0]
+model_filename = u's2s.%s.d%d.w%04d.adam.window%d.%s.fast.h5' % (model, s2s.depth, s2s.width, s2s.window_length, "stateful" if s2s.stateful else "stateless")
 if len(sys.argv) > 1:
     model_filename = sys.argv[1]
 config_filename = model_filename.rstrip('.h5') + '.pkl'
