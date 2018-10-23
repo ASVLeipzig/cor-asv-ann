@@ -581,7 +581,7 @@ class Sequence2Sequence(object):
                                                        np.zeros(padlen, dtype=np.int8)] = 1
                             # teacher forcing:
                             decoder_output_data = np.roll(decoder_input_data,-1,axis=1).astype(np.float32) # output data will be ahead by 1 timestep
-                            decoder_output_data[:,-1,:] = np.zeros(self.num_decoder_tokens) # delete+pad start token rolled in at the other end
+                            decoder_output_data[:,-1,:] = np.hstack([np.ones((batch_size, 1)), np.zeros((batch_size, self.num_decoder_tokens-1))]) # delete+pad start token rolled in at the other end
                             
                             # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
                             decoder_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
