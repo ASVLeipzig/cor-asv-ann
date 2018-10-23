@@ -216,17 +216,18 @@ class Sequence2Sequence(object):
         self.window_length = 7 # How many bytes are encoded at once? (sequence length)
         self.stateful = True # stateful encoder (implicit state transfer between batches)
         self.width = 320  # latent dimensionality of the encoding space (hidden layer state)
-        self.depth = 4 # number of encoder/decoder layers stacked above each other (only 1st layer will be BLSTM)
+        self.depth = 2 # number of encoder/decoder layers stacked above each other (only 1st layer will be BLSTM)
         self.epochs = 100  # maximum number of epochs to train for (unless stopping early by validation loss)
         self.beam_width = 4 # keep track of how many alternative sequences during decode_sequence_beam()?
         self.beam_width_out = self.beam_width # up to how many results can be drawn from generator decode_sequence_beam()?
+        self.lm_loss = True # train with additional output from LM, defined with tied decoder weights and same input but not conditioned on encoder output (applies to encoder_decoder_model only, does not affect decoder_model)
         
         self.num_encoder_tokens = 256 # now utf8 bytes (including nul for non-output, tab for start, newline for stop)
         self.num_decoder_tokens = 256 # now utf8 bytes (including nul for non-output, tab for start, newline for stop)
         
-        self.encoder_decoder_model = None
-        self.encoder_model = None
-        self.decoder_model = None
+        self.encoder_decoder_model = None # combined model for training
+        self.encoder_model = None # separate model for inference
+        self.decoder_model = None # separate model for inference
         
         self.status = 0 # empty / configured / trained?
     
@@ -586,7 +587,11 @@ class Sequence2Sequence(object):
                             # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
                             decoder_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
                             decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0.
-
+                            if self.lm_loss:
+                                lm_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
+                                lm_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0. # true zero
+                                lm_output_weights[decoder_output_data[:,:,0] == 1] = 0. # padded zero
+                            
                             if get_edits: # calculate edits from decoding
                                 # avoid repeating encoder in both functions (greedy and beamed), because we can only reset at the first window
                                 source_states = self.encoder_model.predict_on_batch(encoder_input_data)
@@ -611,6 +616,9 @@ class Sequence2Sequence(object):
                                         print('no beam decoder result within processing limits for "%s\t%s" window %d of %d' % (source_texts[j], target_texts[j], i+1, len(source_lines[j])))
                                         continue # skip this line's window
                             else:
+                                if self.lm_loss:
+                                    decoder_output_data = [decoder_output_data, decoder_output_data] # 2 outputs, 1 combined loss
+                                    decoder_output_weights = [decoder_output_weights, lm_output_weights]
                                 if was_pretrained: # sample_weight quickly causes getting stuck with NaN in gradient updates and weights (regardless of loss function, optimizer, gradient clipping, CPU or GPU) when re-training
                                     yield ([encoder_input_data, decoder_input_data], decoder_output_data)
                                 else:
@@ -680,7 +688,7 @@ class Sequence2Sequence(object):
         or from parallel hypotheses during prediction.)
         '''
         from keras.layers import Input, Dense, TimeDistributed
-        from keras.layers import LSTM, CuDNNLSTM, Bidirectional, concatenate
+        from keras.layers import LSTM, CuDNNLSTM, Bidirectional, concatenate, average
         from keras.models import Model
         from keras.optimizers import Adam
         from keras import backend as K
@@ -708,14 +716,14 @@ class Sequence2Sequence(object):
         #dropout/recurrent_dropout does not seem to help (at least for small unidirectional encoder), go_backwards helps for unidirectional encoder with ~0.1 smaller loss on validation set (and not any slower) unless UTF-8 byte strings are used directly
         encoder_state_outputs = []
         for n in range(self.depth):
-            args = {'return_state': True, 'return_sequences': (n < self.depth-1), 'stateful': self.stateful}
+            args = {'name': 'encoder_lstm_%d' % (n+1), 'return_state': True, 'return_sequences': (n < self.depth-1), 'stateful': self.stateful}
             if not has_cuda:
                 args['recurrent_activation'] = 'sigmoid' # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM
             layer = lstm(self.width, **args)
             if n == 0:
-                encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = Bidirectional(layer)(encoder_inputs)
-                state_h = concatenate([fw_state_h, bw_state_h])
-                state_c = concatenate([fw_state_c, bw_state_c])
+                encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = Bidirectional(layer, name='encoder_lstm_1')(encoder_inputs)
+                state_h = average([fw_state_h, bw_state_h]) # concatenate
+                state_c = average([fw_state_c, bw_state_c]) # concatenate
             else:
                 encoder_outputs, state_h, state_c = layer(encoder_outputs)
             encoder_state_outputs.extend([state_h, state_c])
@@ -731,10 +739,10 @@ class Sequence2Sequence(object):
         # for inference (see further below). 
         decoder_lstms = []
         for n in range(self.depth):
-            args = {'return_state': True, 'return_sequences': True}
+            args = {'name': 'decoder_lstm_%d' % (n+1), 'return_state': True, 'return_sequences': True}
             if not has_cuda:
                 args['recurrent_activation'] = 'sigmoid' # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM
-            layer = lstm(self.width*2 if n == 0 else self.width, **args)
+            layer = lstm(self.width, **args) # self.width*2 if n == 0 else 
             decoder_lstms.append(layer)
             decoder_outputs, _, _ = layer(decoder_inputs if n == 0 else decoder_outputs, 
                                           initial_state=encoder_state_outputs[2*n:2*n+2])
@@ -742,9 +750,19 @@ class Sequence2Sequence(object):
         decoder_dense = TimeDistributed(Dense(self.num_decoder_tokens, activation='softmax'))
         decoder_outputs = decoder_dense(decoder_outputs)
 
+        if self.lm_loss:
+            lm_lstms = []
+            for n in range(self.depth):
+                layer = decoder_lstms[n] # tied weights
+                lm_outputs, _, _ = layer(decoder_inputs if n == 0 else lm_outputs)
+            lm_outputs = decoder_dense(lm_outputs)
+            
+            decoder_outputs = [decoder_outputs, lm_outputs] # 2 outputs, 1 combined loss
+        
         # Bundle the model that will turn
         # `encoder_input_data` and `decoder_input_data` into `decoder_output_data`
         self.encoder_decoder_model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+        
         
         ## Define inference phase model
         # Here's the drill:
@@ -765,8 +783,8 @@ class Sequence2Sequence(object):
         decoder_state_inputs = []
         decoder_state_outputs = []
         for n in range(self.depth):
-            state_h_in = Input(shape=(self.width*2 if n == 0 else self.width,))
-            state_c_in = Input(shape=(self.width*2 if n == 0 else self.width,))
+            state_h_in = Input(shape=(self.width,)) # self.width*2 if n == 0 else 
+            state_c_in = Input(shape=(self.width,)) # self.width*2 if n == 0 else 
             decoder_state_inputs.extend([state_h_in, state_c_in])
             layer = decoder_lstms[n]
             decoder_outputs, state_h_out, state_c_out = layer(decoder_inputs if n == 0 else decoder_outputs, 
@@ -778,11 +796,13 @@ class Sequence2Sequence(object):
             [decoder_outputs] + decoder_state_outputs)
         
         ## Compile model
-        self.encoder_decoder_model.compile(loss='categorical_crossentropy',
-                                           optimizer='adam',
-                                           sample_weight_mode='temporal') # sample_weight slows down slightly (20%)
-        
+        self.recompile()
         self.status = 1
+
+    def recompile(self):
+        self.encoder_decoder_model.compile(loss='categorical_crossentropy', # loss_weights=[1.,1.] if self.lm_loss
+                                           optimizer='adam',
+                                           sample_weight_mode='temporal') # sample_weight slows down training slightly (20%)
     
     def train(self, filename):
         '''train model on text file
@@ -812,6 +832,7 @@ class Sequence2Sequence(object):
         # count how many batches the generator would return per epoch
         with open(filename, 'rb') as f:
             num_lines = sum(1 for line in f)
+        print(u'Training on "%s" with %d lines' % (filename, num_lines))
         split_rand = np.random.uniform(0, 1, (num_lines,)) # reserve split fraction at random line numbers
         fit_generator_autosized(self.encoder_decoder_model,
                                 self.gen_data(filename, train=True, split=split_rand, reset_cb=reset_cb),
@@ -874,6 +895,23 @@ class Sequence2Sequence(object):
         config = {'width': self.width, 'depth': self.depth, 'length': self.window_length, 'stateful': self.stateful}
         pickle.dump(config, open(filename, mode='wb'))
     
+    def load_transfer_weights(self, filename):
+        '''Load weights from another model into the configured/compiled model.
+
+        Load weights from `filename` into the matching layers of the compiled and configured model.
+        The other model need not have exactly the same configuration.
+        (This preserves weights across CPU/GPU implementations or input shape configurations.)
+        '''
+        import h5py
+        from keras.engine.saving import load_weights_from_hdf5_group_by_name
+        assert self.status > 0 # already compiled
+        assert self.depth > 1
+        with h5py.File(filename, mode='r') as f:
+            if 'layer_names' not in f.attrs and 'model_weights' in f:
+                f = f['model_weights']
+            load_weights_from_hdf5_group_by_name(f, self.encoder_decoder_model.layers, skip_mismatch=True, reshape=False)
+        self.status = 1
+
     def load_weights(self, filename):
         '''Load weights into the configured/compiled model.
 
@@ -1086,7 +1124,7 @@ class Sequence2Sequence(object):
         
         def on_batch_end(self, batch, logs={}):
             if logs.get('loss') > 10:
-                print(u'huge loss in', self.here, u'at', batch)
+                pass # print(u'huge loss in', self.here, u'at', batch)
 
 
 class Node(object):
@@ -1159,20 +1197,77 @@ if len(sys.argv) > 2:
     s2s.beam_width_out = s2s.beam_width
 
 if isfile(config_filename) and isfile(model_filename):
-    print('Loading model', model_filename, config_filename)
+    print(u'Loading model', model_filename, config_filename)
     #model = s2s.encoder_decoder_model.load_model(model_filename)
     s2s.load_config(config_filename)
     s2s.configure()
     s2s.load_weights(model_filename)
+
+    # reset weights of pretrained encoder (i.e. keep only decoder weights as initialization):
+    from keras import backend as K
+    session = K.get_session()
+    for layer in s2s.encoder_model.layers:
+        for v in layer.__dict__:
+            v_arg = getattr(layer,v)
+            if hasattr(v_arg, 'initializer'):
+                initializer_method = getattr(v_arg, 'initializer')
+                initializer_method.run(session=session)
+    
+    s2s.train(traindata_ocr)
+    s2s.evaluate(testdata_ocr)
+elif s2s.depth > 1 and isfile(model_filename.replace(".d%d." % s2s.depth, ".d%d." % (s2s.depth-1))):
+    s2s.configure()
+    model_filename_shallow = model_filename.replace(".d%d." % s2s.depth, ".d%d." % (s2s.depth-1))
+    print(u'Loading shallower model weights', model_filename_shallow)
+    s2s.load_transfer_weights(model_filename_shallow)
+    for i in range(1, s2s.depth):
+        s2s.encoder_decoder_model.get_layer(name='encoder_lstm_%d'%i).trainable = False
+        s2s.encoder_decoder_model.get_layer(name='decoder_lstm_%d'%i).trainable = False
+    s2s.recompile() # necessary for trainable to take effect
+    s2s.train(traindata_gt)
+    # s2s.train(traindata_gt_large)
+    # fix weights of pretrained decoder (i.e. keep encoder weights only as initialization):
+    # s2s.decoder_model.trainable = False # seems to have an adverse effect
+    # s2s.recompile() # necessary for trainable to take effect
+    #s2s.train(traindata_ocr)
+    
+    # Save model
+    print(u'Saving model', model_filename, config_filename)
+    s2s.save_config(config_filename)
+    if isfile('s2s_last.h5'):
+        rename('s2s_last.h5', model_filename)
+    else:
+        s2s.save_weights(model_filename)
+    
+    #s2s.evaluate(testdata_ocr)
+elif isfile("lm.dta18.d%d.w%04d.h5" % (s2s.depth, s2s.width)):
+    s2s.configure()
+    model_filename_lm = "lm.dta18.d%d.w%04d.h5" % (s2s.depth, s2s.width)
+    print(u'Loading LM model weights', model_filename_lm)
+    s2s.load_transfer_weights(model_filename_lm) # will only find decoder=LM weights
+    
+    s2s.train(traindata_gt)
+    s2s.train(traindata_ocr)
+    
+    # Save model
+    print(u'Saving model', model_filename, config_filename)
+    s2s.save_config(config_filename)
+    if isfile('s2s_last.h5'):
+        rename('s2s_last.h5', model_filename)
+    else:
+        s2s.save_weights(model_filename)
+    s2s.evaluate(testdata_ocr)
 else:
     s2s.configure()
     # s2s.train(traindata_augmented)
     s2s.train(traindata_gt)
-    s2s.decoder_model.trainable = False # seems to have no effect
+    #s2s.train(traindata_gt_large)
+    # s2s.decoder_model.trainable = False # seems to have an adverse effect
+    # s2s.recompile() # necessary for trainable to take effect
     s2s.train(traindata_ocr)
     
     # Save model
-    print('Saving model', model_filename, config_filename)
+    print(u'Saving model', model_filename, config_filename)
     s2s.save_config(config_filename)
     if isfile('s2s_last.h5'):
         rename('s2s_last.h5', model_filename)
