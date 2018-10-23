@@ -608,7 +608,7 @@ class Sequence2Sequence(object):
                                     try: # query only 1-best
                                         beamdecoded_texts[j] += next(self.decode_sequence_beam(source_state=[layer[j:j+1] for layer in source_states], eol=(i+1>=len(source_lines[j])))).decode("utf-8", "strict")
                                     except StopIteration:
-                                        print('no beam decoder result within processing limits for', source_texts[j], target_texts[j], 'window', i+1, 'of', len(source_lines[j]))
+                                        print('no beam decoder result within processing limits for "%s\t%s" window %d of %d' % (source_texts[j], target_texts[j], i+1, len(source_lines[j])))
                                         continue # skip this line's window
                             else:
                                 if was_pretrained: # sample_weight quickly causes getting stuck with NaN in gradient updates and weights (regardless of loss function, optimizer, gradient clipping, CPU or GPU) when re-training
@@ -917,6 +917,8 @@ class Sequence2Sequence(object):
         #target_seq[0, 0, target_token_index['\t']-1] = 1.
         target_seq[0, 0, b'\t'[0]] = 1.
         #target_seq[0, 0] = b'\t'[0]
+        decoder = codecs.getincrementaldecoder('utf8')()
+        decoder.decode(b'\t')
         
         # Sampling loop for a batch of sequences
         # (to simplify, here we assume a batch of size 1).
@@ -927,10 +929,18 @@ class Sequence2Sequence(object):
             output_states = output[1:]
             
             # Sample a token
-            sampled_token_index = np.argmax(output_scores[0, -1, :])
-            #sampled_char = reverse_target_char_index[sampled_token_index+1]
-            sampled_char = bytes([sampled_token_index])
-            decoded_text += sampled_char
+            extra = decoder.getstate()
+            while True:
+                decoder.setstate(extra)
+                sampled_token_index = np.nanargmax(output_scores[0, -1, :])
+                #sampled_char = reverse_target_char_index[sampled_token_index+1]
+                try:
+                    sampled_char = bytes([sampled_token_index])
+                    decoder.decode(sampled_char)
+                    decoded_text += sampled_char
+                    break
+                except UnicodeDecodeError:
+                    output_scores[0, -1, sampled_token_index] = np.nan # repeat without this output
             
             # Exit condition: either hit max length or find stop character.
             if sampled_char == b'\n':
@@ -982,6 +992,7 @@ class Sequence2Sequence(object):
         
         # generator will raise StopIteration if hypotheses is still empty after loop
         MAX_BATCHES = self.window_length*3 # how many batches (i.e. byte-hypotheses) will be processed per window?
+        #avgpos = 0
         for l in range(MAX_BATCHES):
             # try:
             #     next(n for n in next_fringe if all(np.array_equal(x,y) for x,y in zip(nonbeam_states[:l+1], [s.state for s in n.to_sequence()])))
@@ -1019,7 +1030,7 @@ class Sequence2Sequence(object):
                 scores = scores_output[i,:]
                 scores_order = scores_output_order[i,:]
                 highest = scores[scores_order[-1]]
-                beampos = 256 - np.searchsorted(scores[scores_order], 0.1 * highest) # variable beam width
+                beampos = 256 - np.searchsorted(scores[scores_order], highest-0.3) # variable beam width
                 #beampos = self.beam_width # fixed beam width
                 states = [layer[i:i+1] for layer in states_output] # unstack layers for current sample
                 logscores = -np.log(scores[scores_order])
@@ -1036,9 +1047,12 @@ class Sequence2Sequence(object):
                         pass # ignore this alternative
                     if pos > beampos: # less than one tenth the highest probability?
                         break # ignore further alternatives
+                #avgpos += pos
             if len(next_fringe) > MAX_BATCHES * self.batch_size: # more than can ever be processed within limits?
                 next_fringe = next_fringe[-MAX_BATCHES*self.batch_size:] # to save memory, keep only best
         
+        #avgpos /= l*self.batch_size
+        #print ('total beam iterations: %d, average beam width: %.1f, results: %d, best cost: %.1f, worst cost: %.1f' % (l, avgpos, len(hypotheses), hypotheses[0].cum_cost, hypotheses[-1].cum_cost))
         hypotheses.sort(key=lambda n: n.cum_cost)
         for hypothesis in hypotheses[:self.beam_width_out]:
             indices = hypothesis.to_sequence_of_values()
@@ -1072,7 +1086,7 @@ class Sequence2Sequence(object):
         
         def on_batch_end(self, batch, logs={}):
             if logs.get('loss') > 10:
-                print('huge loss in', self.here, 'at', batch)
+                print(u'huge loss in', self.here, u'at', batch)
 
 
 class Node(object):
@@ -1206,4 +1220,4 @@ def transcode_line(source_line):
     return target_line
         
 
-print("usage example:\n# transcode_line(u'hello world!')\n# s2s.evaluate('%s')" % testdata_ocr)
+print(u"usage example:\n# transcode_line(u'hello world!')\n# s2s.evaluate('%s')" % testdata_ocr)
