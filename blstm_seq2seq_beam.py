@@ -14,9 +14,12 @@ from os import environ, rename
 import sys
 import codecs
 import math
+import signal
+import logging
 import numpy as np
 # these should all be wrapped in functions:
-import pickle, click
+import pickle
+import click
 import threading
 from keras.callbacks import Callback
 
@@ -471,43 +474,41 @@ class Sequence2Sequence(object):
         self.status = 0 # empty / configured / trained?
     
     # for fit_generator()/predict_generator()/evaluate_generator()/standalone -- looping, but not shuffling
-    def gen_data(self, filename, batch_size=None, get_size=False, get_edits=False, split=None, train=False, reset_cb=None):
+    def gen_data(self, filename, get_edits=False, split=None, train=False, reset_cb=None):
         '''generate batches of vector data from text file
         
-        Opens `filename` in binary mode, loops over it (unless `get_size` or `get_edits`),
-        producing one window of `batch_size` lines at a time.
-        Pads windows to a `self.window_length` multiple of the longest line, respectively.
-        If stateful, calls `reset_cb` at the start of each line (if given) or resets model directly (otherwise).
-        Skips lines at `split` positions, depending on `train` (upper vs lower partition).
+        Opens `filename` in binary mode, loops over it (unless `get_edits`),
+        producing one window of batch_size lines at a time.
+        Pads windows to a `self.window_length` multiple of the longest line,
+        respectively.
+        If stateful, calls `reset_cb` at the start of each line (if given)
+        or resets model directly (otherwise).
+        Skips lines at `split` positions (if given), depending on `train`
+        (upper vs lower partition).
         Yields:
         - accumulated (greedy+beam) prediction error metrics if `get_edits`,
-        - number of batches if `get_size`,
         - vector data batches (for fit_generator/evaluate_generator) otherwise.
         '''
-        
-        if not batch_size:
-            if self.stateful:
-                batch_size = self.batch_size # cannot reduce to 1 here (difference to training would break internal encoder updates)
-            else:
-                batch_size = self.batch_size
         
         split_ratio = 0.2
         remainder_pass = False
         was_pretrained = (self.status > 1)
+        with_confidence = filename.endswith('.pkl')
         
         lock = threading.Lock()
         with open(filename, 'rb') as f:
             epoch = 0
-            if filename.endswith('.pkl'):
+            if with_confidence:
                 f = pickle.load(f) # read once
             while True:
                 if not remainder_pass:
                     epoch += 1
                     source_lines = []
                     target_lines = []
-                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                    if with_confidence: # binary input with OCR confidence?
                         sourceconf_lines = []
                     if train and self.scheduled_sampling:
+                        # prepare empirical scheduled sampling (i.e. without proper gradient)
                         line_schedules = []
                         a = 3 # attenuation: 10 enters saturation at about 10 percent of self.epochs
                         if self.scheduled_sampling == 'linear':
@@ -519,31 +520,43 @@ class Sequence2Sequence(object):
                         else:
                             raise Exception('unknown function "%s" for scheduled sampling' % self.scheduled_sampling)
                         #print('sample ratio for this epoch:', sample_ratio)
-                if not filename.endswith('.pkl'):
+                if not with_confidence:
                     f.seek(0) # read again
-                batch_no = 0
+                
                 for line_no, line in enumerate(f):
-                    if isinstance(split, np.ndarray) and (split[line_no] < split_ratio) == train:
-                        #print('skipping line %d in favour of other generator' % line_no)
-                        continue # data shared between training and validation: belongs to other generator
-                    if isinstance(split, np.ndarray) and train and self.scheduled_sampling:
-                        line_schedules.append((split[line_no]-split_ratio)/(1-split_ratio)) # re-use rest of random number for empirical scheduled sampling (i.e. without proper gradient)
-                    if len(source_lines) == 0 and not get_size: # start of batch
+                    if isinstance(split, np.ndarray):
+                        if (split[line_no] < split_ratio) == train:
+                            # data shared between training and validation: belongs to other generator, resp.
+                            #print('skipping line %d in favour of other generator' % line_no)
+                            continue
+                         # re-use rest of random number
+                        rand = (split[line_no]-split_ratio)/(1-split_ratio)
+                    else:
+                        rand = np.random.uniform(0, 1, 1)[0]
+                    if train and self.scheduled_sampling:
+                        line_schedules.append(rand)
+                    if len(source_lines) == 0: # start of batch
                         if self.stateful:
                             if reset_cb: # model controlled by callbacks (training)
-                                reset_cb.reset("lines %d-%d" % (line_no, line_no+batch_size)) # inform callback
+                                # inform callback:
+                                reset_cb.reset("lines %d-%d" % (line_no, line_no+self.batch_size))
                             elif get_edits: # model controlled by caller (batch prediction)
                                 #print('resetting encoder for line', line_no, train)
-                                #self.encoder_decoder_model.reset_states() # does not work for some reason (never returns, even if passing self.sess.as_default() and self.graph.as_default())
+                                # does not work for some reason (never returns,
+                                # even if passing self.sess.as_default() and self.graph.as_default()):
+                                #self.encoder_decoder_model.reset_states()
                                 self.encoder_model.reset_states()
                                 #self.decoder_model.reset_states() # not stateful yet
-                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                    if with_confidence: # binary input with OCR confidence?
                         source_conf, target_text = line # already includes end-of-sequence
                         source_text = u''.join([char for char, prob in source_conf])
                     else:
                         source_text, target_text = line.split(b'\t')
-                        source_text = source_text.decode('utf-8', 'strict') + u'\n' # add end-of-sequence
-                        target_text = target_text.decode('utf-8', 'strict') # start-of-sequence will be added window by window, end-of-sequence already preserved by file iterator
+                         # add end-of-sequence:
+                        source_text = source_text.decode('utf-8', 'strict') + u'\n'
+                         # start-of-sequence will be added window by window,
+                         # end-of-sequence already preserved by file iterator:
+                        target_text = target_text.decode('utf-8', 'strict')
                     
                     # byte-align source and target text line, shelve them into successive fixed-size windows
                     self.aligner.set_seqs(source_text, target_text)
@@ -553,128 +566,42 @@ class Sequence2Sequence(object):
                         #print('ignoring bad line "%s"' % source_text+target_text)
                         continue # avoid training if OCR was too bad
                     alignment1 = self.aligner.get_best_alignment()
+                    if with_confidence: # binary input with OCR confidence?
+                        # multiplex confidences into string alignment result:
+                        k = 0
+                        for i, (source_char, target_char) in enumerate(alignment1):
+                            conf = 0
+                            if source_char != self.aligner.GAP_ELEMENT:
+                                assert source_char == source_conf[k][0], (
+                                    "characters from alignment and from confidence tuples out of sync at " +
+                                    "{} in \"{}\" \"{}\": {}".format(k, source_text, target_text, alignment1))
+                                conf = source_conf[k][1]
+                                k += 1
+                            alignment1[i] = ((source_char, conf), target_char)
                     
                     # Produce batches of training data:
-                    # - fixed `batch_size` lines (each line post-padded to maximum window multiple among batch)
-                    # - fixed `self.window_length` samples (each window post-padded to fixed sequence length)
+                    # - fixed `self.batch_size` lines
+                    #   (each line post-padded to maximum window multiple among batch)
+                    # - fixed `self.window_length` samples
+                    #   (each window post-padded to fixed sequence length)
                     # with decoder windows twice as long as encoder windows.
                     # Yield window by window when full, then inform callback `reset_cb`.
-                    # Callback will do `reset_states()` on all stateful layers of model at `on_batch_begin`.
-                    # If stateful, also throw away partial batches at the very end of the file.
-                    # Ensure that no window cuts through a Unicode codepoint, and the target window fits
-                    # within twice the source window (always move partial characters to the next window).
-                    # todo:
-                    # Try to always fit umlauts and certain other similar pairs in the same window,
-                    # i.e. pay special attention if they have different byte lengths.
-                    # Or is this precaution unnecessary when stateful?
-                    # umlauts = {u"a": u"ä", u"o": u"ö", u"u": u"ü", u"A": u"Ä", u"O": u"Ä", u"U": u"Ü",
-                    #            u"ä": u"aͤ", u"ö": u"oͤ", u"ü": u"uͤ", u"Ä": u"Aͤ", u"Ö": u"Oͤ", u"Ü": u"uͤ",
-                    #            u'"': u"“", u"“": u"‘‘", u"‘": u"“",
-                    #            u"'": u"’", u"’": u"”", u"”": u"’’",
-                    #            u',': u'‚', u'‚': u'„', u'„': u'‚‚',
-                    #            u'-': u'‐', u'‐': u'‐', u'‐': u'-', u'—': u'--', u'–': u'-',
-                    #            u'=': u'⸗', u'⸗': u'⹀', u'⹀': u'=',
-                    #            u'ſ': u'f', u'ß': u'ſs', u's': u'ſ', 
-                    #            u'ã': u'ã', u'ẽ': u'ẽ', u'ĩ': u'ĩ', u'õ': u'õ', u'ñ': u'ñ', u'ũ': u'ũ', u'ṽ': u'ṽ', u'ỹ': u'ỹ',
-                    #            # how about diacritical characters vs combining diacritical marks?
-                    #            u'k': u'ft' }
-                    try:
-                        source_windows = [[]]
-                        target_windows = [[b'\t'[0]]]
-                        i = 0
-                        j = 1
-                        if filename.endswith('.pkl'): # binary input with OCR confidence?
-                            sourceconf_windows = [[]]
-                            k = 0
-                        for source_char, target_char in alignment1:
-                            if source_char != self.aligner.GAP_ELEMENT:
-                                source_bytes = source_char.encode('utf-8')
-                            else:
-                                source_bytes = b''
-                            if target_char != self.aligner.GAP_ELEMENT:
-                                target_bytes = target_char.encode('utf-8')
-                            else:
-                                target_bytes = b''
-                            source_len = len(source_bytes)
-                            target_len = len(target_bytes)
-                            if (i+source_len > self.window_length -3 or
-                                j+target_len > self.window_length*1+1 -3): # window already full?
-                                # or source_char == u' ' or target_char == u' '
-                                if (train and i == 0 and
-                                    len(bytes(target_windows[-1]).decode('utf-8', 'strict').strip(u'—-. \t')) > 0): # empty source window, and not just line art in target window?
-                                    raise Exception("target window does not fit twice the source window in alignment",
-                                                    alignment1,
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")
-                                if (train and j == 1 and
-                                    len(bytes(source_windows[-1]).decode('utf-8', 'strict').strip(u'—-. ')) > 0): # empty target window, and not just line art in source window?
-                                    raise Exception("source window does not fit half the target window in alignment",
-                                                    alignment1,
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")
-                                if i > self.window_length:
-                                    raise Exception("source window too long", i, j,
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")
-                                if j > self.window_length*1+1:
-                                    raise Exception("target window too long", i, j,
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
-                                                    list(map(lambda l: bytes(l).decode('utf-8'),target_windows))) # line.decode("utf-8")                                
-                                # make new window
-                                if (i > 0 and j > 1 and
-                                    (source_char == self.aligner.GAP_ELEMENT and u'—-. '.find(target_char) < 0 or
-                                     target_char == self.aligner.GAP_ELEMENT and u'—-. '.find(source_char) < 0)):
-                                    # move last char from both current windows to new ones
-                                    source_window_last_len = len(bytes(source_windows[-1]).decode('utf-8', 'strict')[-1].encode('utf-8'))
-                                    target_window_last_len = len(bytes(target_windows[-1]).decode('utf-8', 'strict')[-1].encode('utf-8'))
-                                    source_windows.append(source_windows[-1][-source_window_last_len:])
-                                    target_windows.append([b'\t'[0]] + target_windows[-1][-target_window_last_len:])
-                                    source_windows[-2] = source_windows[-2][:-source_window_last_len]
-                                    target_windows[-2] = target_windows[-2][:-target_window_last_len]
-                                    i = source_window_last_len
-                                    j = target_window_last_len + 1
-                                    if filename.endswith('.pkl'): # binary input with OCR confidence?
-                                        sourceconf_windows.append(sourceconf_windows[-1][-source_window_last_len:])
-                                        sourceconf_windows[-2] = sourceconf_windows[-2][:-source_window_last_len]
-                                else:
-                                    i = 0
-                                    j = 1
-                                    source_windows.append([])
-                                    target_windows.append([b'\t'[0]]) # add start-of-sequence (for this window)
-                                    if filename.endswith('.pkl'): # binary input with OCR confidence?
-                                        sourceconf_windows.append([])
-                            if source_char != self.aligner.GAP_ELEMENT:
-                                source_windows[-1].extend(source_bytes)
-                                i += source_len
-                                if filename.endswith('.pkl'): # binary input with OCR confidence?
-                                    assert source_char == source_conf[k][0], "characters from alignment and from confidence tuples out of sync at {} in \"{}\" \"{}\": {}".format(k, source_text, target_text, alignment1)
-                                    sourceconf_windows[-1].extend(source_len*[source_conf[k][1]])
-                                    k += 1
-                            if target_char != self.aligner.GAP_ELEMENT:
-                                target_windows[-1].extend(target_bytes)
-                                j += target_len
-                    except Exception as e:
-                        if epoch == 1:
-                            print('\x1b[2K\x1b[G', end='') # erase (progress bar) line and go to start of line
-                            print('windowing error: ', end='')
-                            print(e)
-                        # rid of the offending window, but keep the previous ones:
-                        source_windows.pop()
-                        target_windows.pop()
-                        if filename.endswith('.pkl'): # binary input with OCR confidence?
-                            sourceconf_windows.pop()
+                    # Callback will do `reset_states()` on all stateful layers of model
+                    # during `on_batch_begin`.
+                    # If stateful, after arriving at the very end of the file with
+                    # a partial batch, wrap around to complete it, randomly selecting
+                    # the required number of lines again.
+                    source_windows, target_windows, sourceconf_windows = (
+                        self.window_line(alignment1,
+                                         with_confidence=with_confidence,
+                                         strict=train, verbose=(epoch == 1)))
                     source_lines.append(source_windows)
                     target_lines.append(target_windows)
-                    if filename.endswith('.pkl'): # binary input with OCR confidence?
+                    if with_confidence:
                         sourceconf_lines.append(sourceconf_windows)
                     
-                    if len(source_lines) == batch_size: # end of batch
-                        max_windows = max([len(line) for line in source_lines])                
-                        if get_size: # merely calculate number of batches that would be generated?
-                            batch_no += batch_size if get_edits else max_windows
-                            source_lines = []
-                            target_lines = []
-                            continue
+                    if len(source_lines) == self.batch_size: # end of batch
+                        max_windows = max([len(line) for line in source_lines])
                         if get_edits:
                             source_texts = []
                             target_texts = []
@@ -684,64 +611,19 @@ class Sequence2Sequence(object):
                         # yield windows...
                         lock.acquire() # ensure no other generator instance interferes within the block of lines
                         for i in range(max_windows):
-                            batch_no += 1
-                            
                             # vectorize
-                            encoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in source_lines]))
-                            decoder_input_sequences = list(map(bytearray,[line[i] if len(line)>i else b'' for line in target_lines]))
-                            if filename.endswith('.pkl'): # binary input with OCR confidence?
+                            encoder_input_sequences = list(map(bytearray,
+                                                               [line[i] if len(line)>i else b'' for line in source_lines]))
+                            decoder_input_sequences = list(map(bytearray,
+                                                               [line[i] if len(line)>i else b'' for line in target_lines]))
+                            if with_confidence: # binary input with OCR confidence?
                                 encoder_conf_sequences = [line[i] if len(line)>i else [] for line in sourceconf_lines]
-                            # with windowing, we cannot use pad_sequences for zero-padding any more, 
-                            # because zero bytes are a valid decoder input or output now (and different from zero input or output):
-                            #encoder_input_sequences = pad_sequences(encoder_input_sequences, maxlen=self.window_length, padding='post')
-                            #decoder_input_sequences = pad_sequences(decoder_input_sequences, maxlen=self.window_length*2, padding='post')
-                            #encoder_input_data = np.eye(256, dtype=np.float32)[encoder_input_sequences,:]
-                            #decoder_input_data = np.eye(256, dtype=np.float32)[decoder_input_sequences,:]
-                            encoder_input_data = np.zeros((batch_size, self.window_length, self.num_encoder_tokens), dtype=np.float32 if filename.endswith('.pkl') else np.int8)
-                            decoder_input_data = np.zeros((batch_size, self.window_length*1+1, self.num_decoder_tokens), dtype=np.int8)
-                            decoder_output_data = np.zeros((batch_size, self.window_length*1+1, self.num_decoder_tokens), dtype=np.int8)
-                            for j, (enc_seq, dec_seq) in enumerate(zip(encoder_input_sequences, decoder_input_sequences)):
-                                if len(enc_seq):
-                                    # encoder uses 256 dimensions (including zero byte):
-                                    encoder_input_data[j*np.ones(len(enc_seq), dtype=np.int8), 
-                                                       np.arange(len(enc_seq), dtype=np.int8), 
-                                                       np.array(enc_seq, dtype=np.int8)] = 1
-                                    if filename.endswith('.pkl'): # binary input with OCR confidence?
-                                        encoder_input_data[j*np.ones(len(enc_seq), dtype=np.int8), 
-                                                           np.arange(len(enc_seq), dtype=np.int8), 
-                                                           np.array(enc_seq, dtype=np.int8)] = np.array(encoder_conf_sequences[j], dtype=np.float32)
-                                    # zero bytes in encoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
-                                    padlen = self.window_length - len(enc_seq)
-                                    encoder_input_data[j*np.ones(padlen, dtype=np.int8), 
-                                                       np.arange(len(enc_seq), self.window_length, dtype=np.int8), 
-                                                       np.zeros(padlen, dtype=np.int8)] = 1
-                                else:
-                                    pass # empty window (i.e. j-th line is shorter than others): true zero-padding (masked)
-                                if len(dec_seq):
-                                    # decoder uses 256 dimensions (including zero byte):
-                                    decoder_input_data[j*np.ones(len(dec_seq), dtype=np.int8), 
-                                                       np.arange(len(dec_seq), dtype=np.int8), 
-                                                       np.array(dec_seq, dtype=np.int8)] = 1
-                                    # zero bytes in decoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
-                                    padlen = self.window_length*1+1 - len(dec_seq)
-                                    decoder_input_data[j*np.ones(padlen, dtype=np.int8), 
-                                                       np.arange(len(dec_seq), self.window_length*1+1, dtype=np.int8), 
-                                                       np.zeros(padlen, dtype=np.int8)] = 1
-                                    # teacher forcing:
-                                    decoder_output_data[j*np.ones(len(dec_seq)-1, dtype=np.int8),
-                                                        np.arange(len(dec_seq)-1, dtype=np.int8),
-                                                        np.array(dec_seq[1:], dtype=np.int8)] = 1
-                                    decoder_output_data[j, len(dec_seq)-1, 0] = 1
-                                    decoder_output_data[j*np.ones(padlen, dtype=np.int8),
-                                                        np.arange(len(dec_seq), self.window_length*1+1, dtype=np.int8),
-                                                        np.zeros(padlen, dtype=np.int8)] = 1
-                                else:
-                                    pass # empty window (i.e. j-th line is shorter than others): true zero-padding (masked)
-                            # teacher forcing:
-                            #decoder_output_data = np.roll(decoder_input_data,-1,axis=1).astype(np.float32) # output data will be ahead by 1 timestep
-                            #decoder_output_data[:,-1,:] = np.hstack([np.ones((batch_size, 1)), np.zeros((batch_size, self.num_decoder_tokens-1))]) # delete+pad start token rolled in at the other end
+                            encoder_input_data, decoder_input_data, decoder_output_data = self.vectorize_sequences(
+                                encoder_input_sequences, decoder_input_sequences,
+                                encoder_conf_sequences if with_confidence else None)
                             
-                            # index of padded samples, so we can mask them with the sample_weight parameter during fit() below
+                            # index of padded samples, so we can mask them
+                            # with the sample_weight parameter during fit() below
                             decoder_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
                             decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0. # true zero (empty window)
                             #decoder_output_weights[decoder_output_data[:,:,0] == 1] = 0. # padded zero (partial window)
@@ -754,7 +636,7 @@ class Sequence2Sequence(object):
                                 # avoid repeating encoder in both functions (greedy and beamed), because we can only reset at the first window
                                 source_states = self.encoder_model.predict_on_batch(encoder_input_data)
                                 
-                                for j in range(batch_size):
+                                for j in range(self.batch_size):
                                     if i == 0:
                                         source_texts.append(u'')
                                         target_texts.append(u'')
@@ -767,22 +649,30 @@ class Sequence2Sequence(object):
                                     # Take one sequence (part of the training/validation set) and try decoding it
                                     source_texts[j] += bytes(source_lines[j][i]).decode("utf-8", "strict")
                                     target_texts[j] += bytes(target_lines[j][i]).lstrip(b'\t').decode("utf-8", "strict")
-                                    decoded_texts[j] += self.decode_sequence_greedy(source_state=[layer[j:j+1] for layer in source_states]).decode("utf-8", "strict")
+                                    decoded_texts[j] += self.decode_sequence_greedy(
+                                        source_state=[layer[j:j+1] for layer in source_states]).decode("utf-8", "strict")
                                     try: # query only 1-best
-                                        beamdecoded_texts[j] += next(self.decode_sequence_beam(source_state=[layer[j:j+1] for layer in source_states], eol=(i+1>=len(source_lines[j])))).decode("utf-8", "strict")
+                                        beamdecoded_texts[j] += next(self.decode_sequence_beam(
+                                            source_state=[layer[j:j+1] for layer in source_states],
+                                            eol=(i+1>=len(source_lines[j])))).decode("utf-8", "strict")
                                     except StopIteration:
-                                        print('no beam decoder result within processing limits for "%s\t%s" window %d of %d' % (source_texts[j], target_texts[j], i+1, len(source_lines[j])))
+                                        print('no beam decoder result within processing limits for ' +
+                                              '"%s\t%s" window %d of %d' % \
+                                              (source_texts[j], target_texts[j], i+1, len(source_lines[j])))
                             else: # yield source/target data to keras consumer loop (fit/evaluate)
                                 if train and self.scheduled_sampling and line_schedules: # and epoch > 1:
                                     # calculate greedy/beamed decoder output to yield as as decoder input
                                     window_nonempty = np.array(list(map(lambda target: len(target)>i, target_lines))) # avoid lines with empty windows
                                     data_nonempty = np.logical_not(np.any(np.all(decoder_input_data == 0, axis=2), axis=1))
-                                    assert np.array_equal(data_nonempty, window_nonempty), "unexpected zero window %d: %s" % (i, target_lines[np.nonzero(np.not_equal(window_nonempty, data_nonempty))[0][0]])
+                                    assert np.array_equal(data_nonempty, window_nonempty), (
+                                        "unexpected zero window %d: %s" % 
+                                        (i, target_lines[np.nonzero(np.not_equal(window_nonempty, data_nonempty))[0][0]]))
                                     line_scheduled = np.array(line_schedules) < sample_ratio # respect current schedule
                                     indexes = np.logical_and(line_scheduled, window_nonempty)
                                     if np.count_nonzero(indexes) > 0:
+                                        # ensure the generator thread gets to see the same tf graph:
                                         # with self.sess.as_default():
-                                        with self.graph.as_default(): # ensure the generator thread gets to see the same tf graph
+                                        with self.graph.as_default():
                                             decoder_input_data_sampled = self.decode_batch_greedy(encoder_input_data)
                                             # overwrite scheduled lines with data sampled from decoder instead of GT:
                                             indexes_condition = np.broadcast_to(indexes, # broadcast to data shape
@@ -793,15 +683,22 @@ class Sequence2Sequence(object):
                                 elif self.lm_loss:
                                     decoder_output_data = [decoder_output_data, decoder_output_data] # 2 outputs, 1 combined loss
                                     decoder_output_weights = [decoder_output_weights, lm_output_weights]
-                                if was_pretrained: # sample_weight quickly causes getting stuck with NaN in gradient updates and weights (regardless of loss function, optimizer, gradient clipping, CPU or GPU) when re-training
+                                if was_pretrained:
+                                    # sample_weight quickly causes getting stuck with NaN,
+                                    # both in gradient updates and weights (regardless of
+                                    # loss function, optimizer, gradient clipping, CPU or GPU)
+                                    # when re-training, so disable
                                     yield ([encoder_input_data, decoder_input_data], decoder_output_data)
                                 else:
-                                    yield ([encoder_input_data, decoder_input_data], decoder_output_data, decoder_output_weights)
+                                    yield ([encoder_input_data, decoder_input_data], decoder_output_data,
+                                           decoder_output_weights)
                                     
                         if get_edits:
-                            for j in range(batch_size):
-                                print('Source input  from', 'training:' if train else 'test:    ', source_texts[j].rstrip(u'\n'))
-                                print('Target output from', 'training:' if train else 'test:    ', target_texts[j].rstrip(u'\n'))
+                            for j in range(self.batch_size):
+                                print('Source input  from', 'training:' if train else 'test:    ',
+                                      source_texts[j].rstrip(u'\n'))
+                                print('Target output from', 'training:' if train else 'test:    ',
+                                      target_texts[j].rstrip(u'\n'))
                                 print('Target prediction (greedy): ', decoded_texts[j].rstrip(u'\n'))
                                 print('Target prediction (beamed): ', beamdecoded_texts[j].rstrip(u'\n'))
 
@@ -821,33 +718,174 @@ class Sequence2Sequence(object):
                                 w_edits_greedy, _ = metric(decoded_tokens,target_tokens)
                                 w_edits_beamed, _ = metric(beamdecoded_tokens,target_tokens)
                                 
-                                yield (c_total, c_edits_ocr, c_edits_greedy, c_edits_beamed, w_total, w_edits_ocr, w_edits_greedy, w_edits_beamed)
+                                yield (c_total, c_edits_ocr, c_edits_greedy, c_edits_beamed,
+                                       w_total, w_edits_ocr, w_edits_greedy, w_edits_beamed)
                         
                         lock.release()
                         source_lines = []
                         target_lines = []
-                        if filename.endswith('.pkl'): # binary input with OCR confidence?
+                        if with_confidence: # binary input with OCR confidence?
                             sourceconf_lines = []
                         if train and self.scheduled_sampling:
                             line_schedules = []
                 
-                if get_size: # return size, do not loop
-                    yield batch_no
-                    break
-                elif get_edits: # do not loop
+                if get_edits: # do not loop
                     if source_lines and not remainder_pass: # except if partially filled batch remains
                         # re-enter loop once, adding just enough lines to complete batch
                         # but picking them randomly from the entire file:
                         assert train == False
                         split = np.random.uniform(0, 1, (line_no+1,))
-                        split_ratio = (batch_size*1.5 - len(source_lines)) / (line_no+1) # slightly larger than exact ratio to ensure we will get enough lines (a little more does no harm)
-                        print('wrapping around after %d lines to get %d more lines for last batch with a random split ratio of %.2f' % (line_no+1, batch_size-len(source_lines), split_ratio))
+                        split_ratio = (self.batch_size*1.5 - len(source_lines)) / (line_no+1) # slightly larger than exact ratio to ensure we will get enough lines (a little more does no harm)
+                        print('wrapping around after %d lines to get %d more lines '
+                              'for last batch with a random split ratio of %.2f' % \
+                              (line_no+1, self.batch_size-len(source_lines), split_ratio))
                         remainder_pass = True # throw away next time we get here
                     else:
-                        break
+                        return
                 else:
-                    yield False
-
+                    yield False # signal end of epoch to autosized fit/evaluate
+    
+    def vectorize_sequences(self, encoder_input_sequences, decoder_input_sequences, encoder_conf_sequences):
+        # with windowing, we cannot use pad_sequences for zero-padding any more,
+        # because zero bytes are a valid decoder input or output now (and different from zero input or output):
+        encoder_input_data  = np.zeros((self.batch_size, self.window_length, self.num_encoder_tokens),
+                                       dtype=np.float32 if encoder_conf_sequences else np.int8)
+        decoder_input_data  = np.zeros((self.batch_size, self.window_length*1+1, self.num_decoder_tokens), dtype=np.int8)
+        decoder_output_data = np.zeros((self.batch_size, self.window_length*1+1, self.num_decoder_tokens), dtype=np.int8)
+        for j, (enc_seq, dec_seq) in enumerate(zip(encoder_input_sequences, decoder_input_sequences)):
+            if len(enc_seq):
+                # encoder uses 256 dimensions (including zero byte):
+                encoder_input_data[j*np.ones(len(enc_seq), dtype=np.int8), 
+                                   np.arange(len(enc_seq), dtype=np.int8), 
+                                   np.array(enc_seq, dtype=np.int8)] = 1
+                if encoder_conf_sequences: # binary input with OCR confidence?
+                    encoder_input_data[j*np.ones(len(enc_seq), dtype=np.int8), 
+                                       np.arange(len(enc_seq), dtype=np.int8), 
+                                       np.array(enc_seq, dtype=np.int8)] = np.array(
+                                           encoder_conf_sequences[j], dtype=np.float32)
+                # zero bytes in encoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
+                padlen = self.window_length - len(enc_seq)
+                encoder_input_data[j*np.ones(padlen, dtype=np.int8),
+                                   np.arange(len(enc_seq), self.window_length, dtype=np.int8),
+                                   np.zeros(padlen, dtype=np.int8)] = 1
+            else:
+                pass # empty window (i.e. j-th line is shorter than others): true zero-padding (masked)
+            if len(dec_seq):
+                # decoder uses 256 dimensions (including zero byte):
+                decoder_input_data[j*np.ones(len(dec_seq), dtype=np.int8),
+                                   np.arange(len(dec_seq), dtype=np.int8),
+                                   np.array(dec_seq, dtype=np.int8)] = 1
+                # zero bytes in decoder input become 1 at zero-byte dimension: indexed zero-padding (learned)
+                padlen = self.window_length*1+1 - len(dec_seq)
+                decoder_input_data[j*np.ones(padlen, dtype=np.int8),
+                                   np.arange(len(dec_seq), self.window_length*1+1, dtype=np.int8),
+                                   np.zeros(padlen, dtype=np.int8)] = 1
+                # teacher forcing:
+                decoder_output_data[j*np.ones(len(dec_seq)-1, dtype=np.int8),
+                                    np.arange(len(dec_seq)-1, dtype=np.int8),
+                                    np.array(dec_seq[1:], dtype=np.int8)] = 1
+                decoder_output_data[j, len(dec_seq)-1, 0] = 1
+                decoder_output_data[j*np.ones(padlen, dtype=np.int8),
+                                    np.arange(len(dec_seq), self.window_length*1+1, dtype=np.int8),
+                                    np.zeros(padlen, dtype=np.int8)] = 1
+            else:
+                pass # empty window (i.e. j-th line is shorter than others): true zero-padding (masked)
+        
+        return encoder_input_data, decoder_input_data, decoder_output_data
+        
+    def window_line(self, line, with_confidence=False, strict=False, verbose=False):
+        # Ensure that no window cuts through a Unicode codepoint, and 
+        # source/target window does not become empty (avoid by moving
+        # last characters from previous window).
+        source_windows = [[]]
+        target_windows = [[b'\t'[0]]]
+        sourceconf_windows = [[]]
+        i = 0
+        j = 1
+        try:
+            for source_char, target_char in line:
+                if with_confidence: # binary input with OCR confidence?
+                    source_char, source_conf = source_char
+                if source_char != self.aligner.GAP_ELEMENT:
+                    source_bytes = source_char.encode('utf-8')
+                else:
+                    source_bytes = b''
+                if target_char != self.aligner.GAP_ELEMENT:
+                    target_bytes = target_char.encode('utf-8')
+                else:
+                    target_bytes = b''
+                source_len = len(source_bytes)
+                target_len = len(target_bytes)
+                if (i+source_len > self.window_length -3 or
+                    j+target_len > self.window_length*1+1 -3): # window already full?
+                    # or source_char == u' ' or target_char == u' '
+                    if (strict and i == 0 and
+                        len(bytes(target_windows[-1]).decode('utf-8', 'strict').strip(u'—-. \t')) > 0):
+                        # empty source window, and not just line art in target window?
+                        raise Exception("target window does not fit the source window in alignment",
+                                        line,
+                                        list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
+                                        list(map(lambda l: bytes(l).decode('utf-8'),target_windows)))
+                    if (strict and j == 1 and
+                        len(bytes(source_windows[-1]).decode('utf-8', 'strict').strip(u'—-. ')) > 0):
+                        # empty target window, and not just line art in source window?
+                        raise Exception("source window does not fit the target window in alignment",
+                                        line,
+                                        list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
+                                        list(map(lambda l: bytes(l).decode('utf-8'),target_windows)))
+                    if i > self.window_length:
+                        raise Exception("source window too long", i, j,
+                                        list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
+                                        list(map(lambda l: bytes(l).decode('utf-8'),target_windows)))
+                    if j > self.window_length*1+1:
+                        raise Exception("target window too long", i, j,
+                                        list(map(lambda l: bytes(l).decode('utf-8'),source_windows)),
+                                        list(map(lambda l: bytes(l).decode('utf-8'),target_windows)))
+                    # make new window
+                    if (i > 0 and j > 1 and
+                        (source_char == self.aligner.GAP_ELEMENT and u'—-. '.find(target_char) < 0 or
+                         target_char == self.aligner.GAP_ELEMENT and u'—-. '.find(source_char) < 0)):
+                        # move last char from both current windows to new ones
+                        source_window_last_len = (
+                            len(bytes(source_windows[-1]).decode('utf-8', 'strict')[-1].encode('utf-8')))
+                        target_window_last_len = (
+                            len(bytes(target_windows[-1]).decode('utf-8', 'strict')[-1].encode('utf-8')))
+                        source_windows.append(source_windows[-1][-source_window_last_len:])
+                        target_windows.append([b'\t'[0]] + target_windows[-1][-target_window_last_len:])
+                        source_windows[-2] = source_windows[-2][:-source_window_last_len]
+                        target_windows[-2] = target_windows[-2][:-target_window_last_len]
+                        i = source_window_last_len
+                        j = target_window_last_len + 1
+                        if with_confidence: # binary input with OCR confidence?
+                            sourceconf_windows.append(sourceconf_windows[-1][-source_window_last_len:])
+                            sourceconf_windows[-2] = sourceconf_windows[-2][:-source_window_last_len]
+                    else:
+                        i = 0
+                        j = 1
+                        source_windows.append([])
+                        target_windows.append([b'\t'[0]]) # add start-of-sequence (for this window)
+                        if with_confidence: # binary input with OCR confidence?
+                            sourceconf_windows.append([])
+                if source_char != self.aligner.GAP_ELEMENT:
+                    source_windows[-1].extend(source_bytes)
+                    i += source_len
+                    if with_confidence: # binary input with OCR confidence?
+                        sourceconf_windows[-1].extend(source_len*[source_conf])
+                if target_char != self.aligner.GAP_ELEMENT:
+                    target_windows[-1].extend(target_bytes)
+                    j += target_len
+        except Exception as e:
+            if verbose:
+                print('\x1b[2K\x1b[G', end='') # erase (progress bar) line and go to start of line
+                print('windowing error: ', end='')
+                print(e)
+            # rid of the offending window, but keep the previous ones:
+            source_windows.pop()
+            target_windows.pop()
+            if with_confidence: # binary input with OCR confidence?
+                sourceconf_windows.pop()
+        return source_windows, target_windows, sourceconf_windows
+    
     def configure(self, batch_size=None):
         '''Define and compile encoder and decoder models for the configured parameters.
         
@@ -859,7 +897,8 @@ class Sequence2Sequence(object):
         or from parallel hypotheses during prediction.)
         '''
         from keras.layers import Input, Dense, TimeDistributed, Dropout
-        from keras.layers import LSTM, CuDNNLSTM, Bidirectional, Lambda, concatenate, average, add
+        from keras.layers import LSTM, CuDNNLSTM, Bidirectional, Lambda
+        from keras.layers import concatenate, average, add
         from keras.models import Model
         from keras import backend as K
         import tensorflow as tf
@@ -879,9 +918,11 @@ class Sequence2Sequence(object):
         if self.residual_connections:
             print('encoder and decoder LSTM outputs are added to inputs in all hidden layers (residual_connections)')
         if self.deep_bidirectional_encoder:
-            print('encoder LSTM is bidirectional in all hidden layers, with fw/bw cross-summation between layers (deep_bidirectional_encoder)')
+            print('encoder LSTM is bidirectional in all hidden layers, ' +
+                  'with fw/bw cross-summation between layers (deep_bidirectional_encoder)')
         if self.bridge_dense:
-            print('state transfer between encoder and decoder LSTM uses non-linear Dense layer as bridge in all hidden layers (bridge_dense)')
+            print('state transfer between encoder and decoder LSTM uses ' +
+                  'non-linear Dense layer as bridge in all hidden layers (bridge_dense)')
         lstm = CuDNNLSTM if has_cuda else LSTM
         
         ### Define training phase model
@@ -893,29 +934,48 @@ class Sequence2Sequence(object):
         else:
             encoder_inputs = Input(shape=(self.window_length, self.num_encoder_tokens))
         # Set up the encoder. We will discard encoder_outputs and only keep encoder_state_outputs.
-        #dropout/recurrent_dropout does not seem to help (at least for small unidirectional encoder), go_backwards helps for unidirectional encoder with ~0.1 smaller loss on validation set (and not any slower) unless UTF-8 byte strings are used directly
+        #dropout/recurrent_dropout does not seem to help (at least for small unidirectional encoder),
+        #go_backwards helps for unidirectional encoder with ~0.1 smaller loss on validation set (and not any slower),
+        # unless UTF-8 byte strings are used directly
         encoder_state_outputs = []
+        
         if self.deep_bidirectional_encoder:
             # cross-summary here means: i_next_fw[k] = i_next_bw[k] = o_fw[k-1]+o_bw[k-1]
-            # i.e. add flipped fw/bw outputs by reshaping last axis into half-width axis and 2-dim axis, then reversing the last and reshaping back
-            # in numpy this would be: x + np.flip(x.reshape(x.shape[:-1] + (int(x.shape[-1]/2),2)), -1).reshape(x.shape))
-            # in keras this would be something like this (but reshape requires TensorShape no list/tuple): x + K.reshape(K.reverse(K.reshape(x, K.int_shape(x)[:-1] + (x.shape[-1].value//2,2)), axes=-1), x.shape)
-            # in tensorflow this would be (but does not work with batch_shape None): x + tf.reshape(tf.reverse(tf.reshape(x, tf.TensorShape(x.shape.as_list()[:-1] + [x.shape[-1].value//2, 2])), [-1]), x.shape)
-            cross_sum = Lambda(lambda x: x + tf.reshape(tf.reverse(tf.reshape(x, [-1, x.shape[1].value, x.shape[2].value//2, 2]), [-1]), [-1] + x.shape.as_list()[1:])) # it finally works by replacing all None dimensions with -1
-            # pyramidal cross-summary means also multiplexing timesteps: i_next_fw[k,t] = i_next_bw[k,t] = o_fw[k-1,t]+o_bw[k-1,t]+o_fw[k-1,t-1]+o_bw[k-1,t-1]
+            # i.e. add flipped fw/bw outputs by reshaping last axis into half-width axis and 2-dim axis,
+            # then reversing the last and reshaping back;
+            # in numpy this would be:
+            #     x + np.flip(x.reshape(x.shape[:-1] + (int(x.shape[-1]/2),2)), -1).reshape(x.shape))
+            # in keras this would be something like this (but reshape requires TensorShape no list/tuple):
+            #     x + K.reshape(K.reverse(K.reshape(x, K.int_shape(x)[:-1] + (x.shape[-1].value//2,2)), axes=-1), x.shape)
+            # in tensorflow this would be (but does not work with batch_shape None):
+            #     x + tf.reshape(tf.reverse(tf.reshape(x, tf.TensorShape(x.shape.as_list()[:-1] + [x.shape[-1].value//2, 2])), [-1]), x.shape)
+            # it finally works by replacing all None dimensions with -1:
+            cross_sum = Lambda(lambda x: x + tf.reshape(
+                tf.reverse(tf.reshape(x, [-1, x.shape[1].value, x.shape[2].value//2, 2]), [-1]),
+                [-1] + x.shape.as_list()[1:]))
+            # TODO: pyramidal cross-summary means also multiplexing timesteps:
+            # i_next_fw[k,t] = i_next_bw[k,t] = o_fw[k-1,t]+o_bw[k-1,t]+o_fw[k-1,t-1]+o_bw[k-1,t-1]
+        
         for n in range(self.depth):
-            args = {'name': 'encoder_lstm_%d' % (n+1), 'return_state': True, 'return_sequences': (n < self.depth-1), 'stateful': self.stateful}
+            args = {'name': 'encoder_lstm_%d' % (n+1),
+                    'return_state': True,
+                    'return_sequences': (n < self.depth-1),
+                    'stateful': self.stateful}
             if not has_cuda:
-                args['recurrent_activation'] = 'sigmoid' # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM
+                # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM:
+                args['recurrent_activation'] = 'sigmoid'
             layer = lstm(self.width, **args)
             if self.deep_bidirectional_encoder:
-                encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = Bidirectional(layer, name=layer.name)(encoder_inputs if n == 0 else cross_sum(encoder_outputs))
+                encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = (
+                    Bidirectional(layer, name=layer.name)(
+                        encoder_inputs if n == 0 else cross_sum(encoder_outputs)))
                 # prepare for current layer decoder initial_state:
                 state_h = average([fw_state_h, bw_state_h]) # concatenate
                 state_c = average([fw_state_c, bw_state_c]) # concatenate
             else:
                 if n == 0:
-                    encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = Bidirectional(layer, name=layer.name)(encoder_inputs)
+                    encoder_outputs, fw_state_h, fw_state_c, bw_state_h, bw_state_c = (
+                        Bidirectional(layer, name=layer.name)(encoder_inputs))
                     # prepare for base layer decoder initial_state:
                     state_h = average([fw_state_h, bw_state_h]) # concatenate
                     state_c = average([fw_state_c, bw_state_c]) # concatenate
@@ -938,7 +998,9 @@ class Sequence2Sequence(object):
         
         # Set up an input sequence and process it.
         if self.stateful:
-            decoder_inputs = Input(batch_shape=(None, None, self.num_decoder_tokens)) # shape inference would assume fixed batch size here as well (but we need that to be flexible for prediction)
+            # shape inference would assume fixed batch size here as well
+            # (but we need that to be flexible for prediction):
+            decoder_inputs = Input(batch_shape=(None, None, self.num_decoder_tokens))
         else:
             decoder_inputs = Input(shape=(None, self.num_decoder_tokens))
         # Set up decoder to return full output sequences (so we can train in parallel),
@@ -949,7 +1011,8 @@ class Sequence2Sequence(object):
         for n in range(self.depth):
             args = {'name': 'decoder_lstm_%d' % (n+1), 'return_state': True, 'return_sequences': True}
             if not has_cuda:
-                args['recurrent_activation'] = 'sigmoid' # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM
+                # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM:
+                args['recurrent_activation'] = 'sigmoid'
             layer = lstm(self.width, **args) # self.width*2 if n == 0 else 
             decoder_lstms.append(layer)
             decoder_outputs2, _, _ = layer(decoder_inputs if n == 0 else decoder_outputs,
@@ -960,7 +1023,8 @@ class Sequence2Sequence(object):
             else:
                 decoder_outputs = decoder_outputs2
             decoder_outputs = Dropout(self.dropout)(decoder_outputs)
-        #decoder_dense = TimeDistributed(Dense(self.num_decoder_tokens, activation='sigmoid')) # for experimenting with global normalization in beam search (gets worse if done just like that)
+        # for experimenting with global normalization in beam search
+        # (gets worse if done just like that): 'sigmoid'
         decoder_dense = TimeDistributed(Dense(self.num_decoder_tokens, activation='softmax'))
         decoder_outputs = decoder_dense(decoder_outputs)
 
@@ -975,7 +1039,6 @@ class Sequence2Sequence(object):
         # Bundle the model that will turn
         # `encoder_input_data` and `decoder_input_data` into `decoder_output_data`
         self.encoder_decoder_model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-        
         
         ## Define inference phase model
         # Here's the drill:
@@ -1000,8 +1063,9 @@ class Sequence2Sequence(object):
             state_c_in = Input(shape=(self.width,)) # self.width*2 if n == 0 else 
             decoder_state_inputs.extend([state_h_in, state_c_in])
             layer = decoder_lstms[n]
-            decoder_outputs, state_h_out, state_c_out = layer(decoder_inputs if n == 0 else decoder_outputs, 
-                                                              initial_state=decoder_state_inputs[2*n:2*n+2])
+            decoder_outputs, state_h_out, state_c_out = layer(
+                decoder_inputs if n == 0 else decoder_outputs, 
+                initial_state=decoder_state_inputs[2*n:2*n+2])
             decoder_state_outputs.extend([state_h_out, state_c_out])
         decoder_outputs = decoder_dense(decoder_outputs)
         self.decoder_model = Model(
@@ -1016,13 +1080,14 @@ class Sequence2Sequence(object):
         # self.sess.run(tf.global_variables_initializer())
         self.graph = tf.get_default_graph()
         self.status = 1
-
+    
     def recompile(self):
         from keras.optimizers import Adam
         
-        self.encoder_decoder_model.compile(loss='categorical_crossentropy', # loss_weights=[1.,1.] if self.lm_loss
-                                           optimizer=Adam(clipnorm=5), #'adam',
-                                           sample_weight_mode='temporal') # sample_weight slows down training slightly (20%)
+        self.encoder_decoder_model.compile(
+            loss='categorical_crossentropy', # loss_weights=[1.,1.] if self.lm_loss
+            optimizer=Adam(clipnorm=5), #'adam',
+            sample_weight_mode='temporal') # sample_weight slows down training slightly (20%)
     
     def train(self, filename):
         '''train model on text file
@@ -1035,13 +1100,14 @@ class Sequence2Sequence(object):
         Validate on a random fraction of lines automatically separated before.
         (Data are always split by line, regardless of stateless/stateful mode.)
         '''
-        from keras.callbacks import EarlyStopping, ModelCheckpoint
+        from keras.callbacks import EarlyStopping, ModelCheckpoint, TerminateOnNaN
         from keras_train import fit_generator_autosized, evaluate_generator_autosized
         
         # Run training
-        callbacks = [EarlyStopping(monitor='val_loss', patience=3, verbose=1, mode='min'),
-                     ModelCheckpoint('s2s_last.h5', monitor='val_loss', # to be able to replay long epochs (crash/overfitting)
-                                     save_best_only=True, save_weights_only=True, mode='min')]
+        callbacks = [EarlyStopping(monitor='val_loss', patience=3, verbose=1, mode='min',
+                                   restore_best_weights=True),
+                     TerminateOnNaN(),
+                     StopSignalCallback(signal.SIGINT)]
         if self.stateful: # reset states between batches of different lines/documents (controlled by generator)
             reset_cb = self.ResetStatesCallback(self.encoder_model)
             callbacks.append(reset_cb)
@@ -1055,11 +1121,13 @@ class Sequence2Sequence(object):
         print(u'Training on "%s" with %d lines' % (filename, num_lines))
         split_rand = np.random.uniform(0, 1, (num_lines,)) # reserve split fraction at random line numbers
         fit_generator_autosized(self.encoder_decoder_model,
-                                self.gen_data(filename, train=True, split=split_rand, reset_cb=reset_cb),
+                                self.gen_data(filename, train=True,
+                                              split=split_rand, reset_cb=reset_cb),
                                 epochs=self.epochs,
                                 workers=1, # more than 1 would effectively increase epoch size
                                 use_multiprocessing=self.scheduled_sampling == None,
-                                validation_data=self.gen_data(filename, train=False, split=split_rand, reset_cb=reset_cb),
+                                validation_data=self.gen_data(filename, train=False,
+                                                              split=split_rand, reset_cb=reset_cb),
                                 verbose=1,
                                 callbacks=callbacks,
                                 validation_callbacks=[reset_cb] if self.stateful else None)
@@ -1103,11 +1171,15 @@ class Sequence2Sequence(object):
         config = pickle.load(open(filename, mode='rb'))
         self.width = config['width']
         self.depth = config['depth']
-        self.window_length = config['length'] if 'length' in config else 7 # old default
+        self.window_length = config['length'] \
+                             if 'length' in config else 7 # old default
         self.stateful = config['stateful']
-        self.residual_connections = config['residual_connections'] if 'residual_connections' in config else False # old default
-        self.deep_bidirectional_encoder = config['deep_bidirectional_encoder'] if 'deep_bidirectional_encoder' in config else False # old default
-        self.bridge_dense = config['bridge_dense'] if 'bridge_dense' in config else False # old default
+        self.residual_connections = config['residual_connections'] \
+                                    if 'residual_connections' in config else False # old default
+        self.deep_bidirectional_encoder = config['deep_bidirectional_encoder'] \
+                                          if 'deep_bidirectional_encoder' in config else False # old default
+        self.bridge_dense = config['bridge_dense'] \
+                            if 'bridge_dense' in config else False # old default
     
     def save_config(self, filename):
         '''Save parameters from configuration.
@@ -1135,7 +1207,8 @@ class Sequence2Sequence(object):
         with h5py.File(filename, mode='r') as f:
             if 'layer_names' not in f.attrs and 'model_weights' in f:
                 f = f['model_weights']
-            load_weights_from_hdf5_group_by_name(f, self.encoder_decoder_model.layers, skip_mismatch=True, reshape=False)
+            load_weights_from_hdf5_group_by_name(f, self.encoder_decoder_model.layers,
+                                                 skip_mismatch=True, reshape=False)
         self.status = 1
 
     def load_weights(self, filename):
@@ -1208,7 +1281,8 @@ class Sequence2Sequence(object):
         #self.decoder_model.reset_states()
        
         # Encode the source as state vectors.
-        states_value = source_state if source_state != None else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
+        states_value = source_state if source_state != None else \
+            self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
         
         # Generate empty target sequence of length 1.
         #target_seq = np.zeros((1, 1))
@@ -1251,7 +1325,8 @@ class Sequence2Sequence(object):
             target_seq = np.zeros((1, 1, self.num_decoder_tokens), dtype=np.int8)
             #target_seq[0, 0] = sampled_token_index+1
             target_seq[0, 0, sampled_token_index] = 1.
-            # feeding back the softmax vector directly vastly deteriorates predictions (because only identity vectors are presented during training)
+            # feeding back the softmax vector directly vastly deteriorates predictions
+            # (because only identity vectors are presented during training)
             # but we should add beam search (keep n best overall paths, add k best predictions here)
             
             # Update states
@@ -1284,7 +1359,8 @@ class Sequence2Sequence(object):
         #self.encoder_model.reset_states()
         #self.decoder_model.reset_states()
         next_fringe = [Node(parent=None,
-                            state=source_state if source_state != None else self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
+                            state=source_state if source_state != None else \
+                                self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0)), # layer list of state arrays
                             value=b'\t'[0], # start symbol byte
                             cost=0.0,
                             extras=decoder.getstate())]
@@ -1357,35 +1433,65 @@ class Sequence2Sequence(object):
             byteseq = bytes(indices[1:]).rstrip(bytes([0])) # strip trailing but keep intermediate zero bytes
             yield byteseq
     
-    class ResetStatesCallback(Callback):
-        '''Keras callback for stateful models to reset state between files.
-        
-        Callback to be called by `fit_generator()` or even `evaluate_generator()`:
-        do `model.reset_states()` whenever generator sees EOF (on_batch_begin with self.eof),
-        and between training and validation (on_batch_end with batch>=steps_per_epoch-1).
-        '''
-        def __init__(self, callback_model):
-            self.eof = False
-            self.here = ''
-            self.next = ''
-            self.callback_model = callback_model # different than self.model set by set_model()
-        
-        def reset(self, where):
-            self.eof = True
-            self.next = where
-        
-        def on_batch_begin(self, batch, logs={}):
-            if self.eof:
-                #print('resetting model at batch', batch, 'for train:', self.params['do_validation'])
-                # between training files
-                self.callback_model.reset_states() # reset only encoder (training does not converge if applied to complete encoder-decoder)
-                self.eof = False
-                self.here = self.next
-        
-        def on_batch_end(self, batch, logs={}):
-            if logs.get('loss') > 10:
-                pass # print(u'huge loss in', self.here, u'at', batch)
+class StopSignalCallback(Callback):
+    '''Keras callback for graceful interruption of training.
 
+    Halts training prematurely at the end of the current batch
+    when the given signal was received once. If the callback
+    gets to receive the signal again, exits immediately.
+    '''
+
+    def __init__(self, sig=signal.SIGINT, logger=None):
+        super(StopSignalCallback, self).__init__()
+        self.received = False
+        self.sig = sig
+        self.logger = logger or logging.getLogger(__name__)
+        def stopper(sig, frame):
+            if sig == self.sig:
+                if self.received: # called again?
+                    self.logger.critical('interrupting')
+                    exit(0)
+                else:
+                    self.logger.critical('stopping training')
+                    self.received = True
+        self.action = signal.signal(self.sig, stopper)
+
+    def __del__(self):
+        signal.signal(self.sig, self.action)
+
+    def on_batch_end(self, batch, logs=None):
+        if self.received:
+            self.model.stop_training = True
+
+class ResetStatesCallback(Callback):
+    '''Keras callback for stateful models to reset state between files.
+
+    Callback to be called by `fit_generator()` or even `evaluate_generator()`:
+    do `model.reset_states()` whenever generator sees EOF (on_batch_begin with self.eof),
+    and between training and validation (on_batch_end with batch>=steps_per_epoch-1).
+    '''
+    def __init__(self, callback_model):
+        self.eof = False
+        self.here = ''
+        self.next = ''
+        self.callback_model = callback_model # different than self.model set by set_model()
+
+    def reset(self, where):
+        self.eof = True
+        self.next = where
+
+    def on_batch_begin(self, batch, logs={}):
+        if self.eof:
+            #print('resetting model at batch', batch, 'for train:', self.params['do_validation'])
+            # called between training files,
+            # reset only encoder (training does not converge if applied to complete encoder-decoder)
+            self.callback_model.reset_states()
+            self.eof = False
+            self.here = self.next
+
+    def on_batch_end(self, batch, logs={}):
+        if logs.get('loss') > 10:
+            pass # print(u'huge loss in', self.here, u'at', batch)
 
 class Node(object):
     def __init__(self, parent, state, value, cost, extras):
@@ -1435,7 +1541,7 @@ s2s = Sequence2Sequence()
 traindata_gt = '../../daten/dta19-reduced/traindata.gt-gt.txt' # GT-only (clean) source text (for pretraining)
 traindata_gt_large = '../../daten/dta19-reduced/dta_komplett_2017-09-01.18xy.rand300k.gt-gt.txt'
 #traindata_ocr = '../../daten/dta19-reduced/traindata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
-#traindata_ocr = '../../daten/dta19-reduced/traindata.Fraktur4-gt.pkl' # OCR-only (noisy) source text with confidence
+traindata_ocr = '../../daten/dta19-reduced/traindata.Fraktur4-gt.pkl' # OCR-only (noisy) source text with confidence
 #traindata_ocr = '../../daten/dta19-reduced/traindata.foo4-gt.filtered.txt' # OCR-only (noisy) source text
 #traindata_ocr = '../../daten/dta19-reduced/traindata.foo4-gt.pkl' # OCR-only (noisy) source text with confidence
 #traindata_ocr = '../../daten/dta19-reduced/traindata.deu-frak3-gt.filtered.txt' # OCR-only (noisy) source text
@@ -1450,7 +1556,7 @@ traindata_gt_large = '../../daten/dta19-reduced/dta_komplett_2017-09-01.18xy.ran
 #traindata_ocr = '../../daten/GT4HistOCR/corpus/dta19/flattened/traindata.foo4-gt.pkl' # OCR-only (noisy) source text with confidence
 #traindata_ocr = '../../daten/GT4HistOCR/corpus/dta19/flattened/traindata.ocrofraktur-gt.pkl' # OCR-only (noisy) source text with confidence
 #traindata_ocr = '../../daten/GT4HistOCR/corpus/dta19/flattened/traindata.ocrofraktur-jze-gt.pkl' # OCR-only (noisy) source text with confidence
-traindata_ocr = '../../daten/GT4HistOCR/corpus/dta19/flattened/traindata.mixed-gt.pkl' # OCR-only (noisy) source text with confidence
+#traindata_ocr = '../../daten/GT4HistOCR/corpus/dta19/flattened/traindata.mixed-gt.pkl' # OCR-only (noisy) source text with confidence
 #testdata_ocr = '../../daten/dta19-reduced/testdata.Fraktur4-gt.filtered.txt' # OCR-only (noisy) source text
 testdata_ocr = '../../daten/dta19-reduced/testdata.Fraktur4-gt.pkl' # OCR-only (noisy) source text with confidence
 #testdata_ocr = '../../daten/dta19-reduced/testdata.foo4-gt.filtered.txt' # OCR-only (noisy) source text
@@ -1509,8 +1615,6 @@ else:
             s2s.load_transfer_weights(model_filename_lm) # will only find decoder=LM weights
         s2s.train(traindata_gt)
         #s2s.train(traindata_gt_large)
-        if isfile('s2s_last.h5'):
-            s2s.load_weights('s2s_last.h5') # make sure to use best weights from EarlyStopping
     # s2s.decoder_model.trainable = False # seems to have an adverse effect
     # s2s.recompile() # necessary for trainable to take effect
     # reset weights of pretrained encoder (i.e. keep only decoder weights as initialization):
@@ -1528,11 +1632,7 @@ else:
     # Save model
     print(u'Saving model', model_filename, config_filename)
     s2s.save_config(config_filename)
-    if isfile('s2s_last.h5'):
-        rename('s2s_last.h5', model_filename)
-        s2s.load_weights(model_filename) # make sure to use best weights from EarlyStopping
-    else:
-        s2s.save_weights(model_filename)
+    s2s.save_weights(model_filename)
     
     s2s.evaluate(testdata_ocr)
 
