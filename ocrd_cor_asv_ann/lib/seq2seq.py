@@ -29,7 +29,7 @@ class Sequence2Sequence(object):
       splitting lines via shared random variable
     - efficient preprocessing
     - use true zero for encoder padding and decoder start-of-sequence,
-      use tab character for decoder padding (learned/not masked in training,
+      use newline character for decoder padding (learned/not masked in training,
       treated like end-of-sequence in inference)
     - add runtime preprocessing function for convenient single-line testing
     - change first layer to bidirectional, stack unidirectional LSTM layers
