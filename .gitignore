@@ -4,3 +4,10 @@ s2s.*.log
 s2s.*.len
 s2s.*.png
 s2s.*.csv
+*~
+__pycache__/
+*.py[cod]
+env/
+env3/
+TAGS
+
