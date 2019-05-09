@@ -41,7 +41,6 @@ class Sequence2Sequence(object):
     - use line-global additive-linear soft attention to connect encoder
       (top-HL) outputs to decoder (top-HL) inputs (instead of mere
       final-initial state transfer)
-    - add topology variant: stateful encoder mode
     - add topology variant: deep bi-directional encoder
     - add topology variant: residual connections
     - add topology variant: dense bridging final-initial state transfer
@@ -56,6 +55,8 @@ class Sequence2Sequence(object):
     Features still (very much) wanting of implementation:
     
     - stateful decoder mode (in non-transfer part of state function)
+    - attention decoding with (linear-time) hard monotonic alignment
+      instead of softmax alignment (with quadratic-time complexity)
     - context conditioning (with meta-data inputs like OCR engine)
     - methods to avoid exposure bias and label/myopic bias:
       generalized adversarial training (Huszár 2015),
@@ -106,7 +107,7 @@ class Sequence2Sequence(object):
         ### model parameters
         # How many samples are trained/decoded together (in parallel)?
         self.batch_size = 64
-        # stateful encoder (implicit state transfer between batches)?
+        # stateful decoder (implicit state transfer between batches)?
         self.stateful = False
         # number of nodes in the hidden layer (dimensionality of the encoding space)?
         self.width = 512
@@ -149,12 +150,12 @@ class Sequence2Sequence(object):
         
         ### inference parameters
         # up to how many new candidates can enter the beam in decode_sequence_beam?
-        #self.beam_width_in = 4
+        self.beam_width_in = 4
         # how much worse than the best probability
         # may new candidates be to enter the beam in decode_sequence_beam?
-        self.beam_threshold_in = 0.7
+        self.beam_threshold_in = 0.5
         # up to how many results can be drawn from generator decode_sequence_beam?
-        self.beam_width_out = 10
+        self.beam_width_out = 32
 
         ### runtime variables
         self.logger = logger or logging.getLogger(__name__)
@@ -181,9 +182,6 @@ class Sequence2Sequence(object):
         Use given `batch_size` for encoder input if stateful:
         configure once for training phase (with parallel lines),
         then reconfigure for prediction (with only 1 line each).
-        (Decoder input will always have `self.batch_size`,
-        either from parallel input lines during training phase,
-        or from parallel hypotheses during prediction.)
         '''
         from keras.initializers import RandomNormal
         from keras.layers import Input, Dense, TimeDistributed, Dropout, Lambda
@@ -222,13 +220,8 @@ class Sequence2Sequence(object):
         ### Define training phase model
         
         # encoder part:
-        if self.stateful:
-            # batch_size = 1 # override does not work (re-configuration would break internal encoder updates)
-            encoder_input = Input(batch_shape=(self.batch_size, None, self.voc_size),
-                                  name='encoder_input')
-        else:
-            encoder_input = Input(shape=(None, self.voc_size),
-                                  name='encoder_input')
+        encoder_input = Input(shape=(None, self.voc_size),
+                              name='encoder_input')
         char_embedding = Dense(self.width, use_bias=False,
                                kernel_initializer=RandomNormal(stddev=0.001),
                                kernel_regularizer=self._regularise_chars,
@@ -258,8 +251,7 @@ class Sequence2Sequence(object):
         for n in range(self.depth):
             args = {'name': 'encoder_lstm_%d' % (n+1),
                     'return_state': True,
-                    'return_sequences': True,
-                    'stateful': self.stateful}
+                    'return_sequences': True}
             if not has_cuda:
                 # instead of default 'hard_sigmoid' which deviates from CuDNNLSTM:
                 args['recurrent_activation'] = 'sigmoid'
@@ -284,14 +276,9 @@ class Sequence2Sequence(object):
                         encoder_output = add([encoder_output2, encoder_output])
                 else:
                     encoder_output = encoder_output2
-            if self.stateful:
-                constant_shape = (self.batch_size, 1, self.width * 2
-                                  if n == 0 or self.deep_bidirectional_encoder
-                                  else self.width)
-            else:
-                constant_shape = (1, self.width * 2
-                                  if n == 0 or self.deep_bidirectional_encoder
-                                  else self.width)
+            constant_shape = (1, self.width * 2
+                              if n == 0 or self.deep_bidirectional_encoder
+                              else self.width)
             # variational dropout (time-constant) – LSTM (but not CuDNNLSTM)
             # has the (non-recurrent) dropout keyword option for this:
             encoder_output = Dropout(self.dropout, noise_shape=constant_shape)(encoder_output)
@@ -313,14 +300,8 @@ class Sequence2Sequence(object):
                                           name='attention_dense')
         
         # decoder part:
-        if self.stateful:
-            # shape inference would assume fixed batch size here as well
-            # (but we need that to be flexible for prediction):
-            decoder_input = Input(batch_shape=(None, None, self.voc_size),
-                                  name='decoder_input')
-        else:
-            decoder_input = Input(shape=(None, self.voc_size),
-                                  name='decoder_input')
+        decoder_input = Input(shape=(None, self.voc_size),
+                              name='decoder_input')
         decoder_input0 = char_input_proj(decoder_input)
         decoder_output = decoder_input0
         
@@ -352,6 +333,8 @@ class Sequence2Sequence(object):
                                                  initial_state=encoder_state_outputs[2*n:2*n+3],
                                                  constants=[encoder_output,
                                                             attention_dense(encoder_output)])
+                # throw away alignment output:
+                decoder_output2 = Lambda(lambda x: x[:, :, :self.width])(decoder_output2)
             decoder_lstms.append(layer)
             # add residual connections:
             if n > 0 and self.residual_connections:
@@ -437,12 +420,8 @@ class Sequence2Sequence(object):
                 decoder_state_outputs.extend([state_h_out,
                                               state_c_out])
             else:
-                if self.stateful:
-                    attention_input = Input(batch_shape=(None, None, self.width),
-                                            name='attention_input')
-                else:
-                    attention_input = Input(shape=(None, self.width),
-                                            name='attention_input')
+                attention_input = Input(shape=(None, self.width),
+                                        name='attention_input')
                 attention_state_in = Input(shape=(self.width,),
                                            name='attention_state_input')
                 decoder_state_inputs.append(attention_state_in)
@@ -465,11 +444,14 @@ class Sequence2Sequence(object):
                 decoder_state_outputs.extend([state_h_out,
                                               state_c_out,
                                               attention_state_out])
+                # split alignment and decoder output:
+                alignment_output = Lambda(lambda x: x[:, :, self.width:])(decoder_output)
+                decoder_output = Lambda(lambda x: x[:, :, :self.width])(decoder_output)
         decoder_output = char_output_proj(decoder_output)
         # must be resynced each time encoder_decoder_model changes:
         self.decoder_model = Model(
             [decoder_input, attention_input] + decoder_state_inputs,
-            [decoder_output] + decoder_state_outputs,
+            [decoder_output, alignment_output] + decoder_state_outputs,
             name='decoder_model')
         
         ## Compile model
@@ -545,24 +527,7 @@ class Sequence2Sequence(object):
         
         return K.in_train_phase(lowrank + underspecification, 0.)
     
-    def train(self, filenames, val_filenames=None):
-        '''train model on given text files.
-        
-        Pass the character sequences of lines in `filenames`, paired into
-        source and target (and possibly, source confidence values),
-        to the loop training model weights with stochastic gradient descent.
-        The generator will open the file, looping over the complete set (epoch)
-        as long as validation error does not increase in between (early stopping).
-        
-        Validate on a random fraction of lines automatically separated before,
-        unless `val_filenames` is given, in which case only those files are used
-        for validation.
-        '''
-        from keras.callbacks import EarlyStopping, TerminateOnNaN
-        from .callbacks import StopSignalCallback, ResetStatesCallback
-        from .keras_train import fit_generator_autosized, evaluate_generator_autosized
-        
-        # todo: shuffle lines
+    def map_files(self, filenames):
         num_lines = 0
         chars = set(self.mapping[0].keys()) # includes '' (0)
         for filename in filenames:
@@ -584,24 +549,6 @@ class Sequence2Sequence(object):
                     line = unicodedata.normalize('NFC', line)
                     chars.update(set(line))
                     num_lines += 1
-        for filename in val_filenames or []:
-            # todo: there must be a better way to detect this:
-            with_confidence = filename.endswith('.pkl')
-            with open(filename, 'rb' if with_confidence else 'r') as file:
-                if with_confidence:
-                    file = pickle.load(file) # read once
-                for line in file:
-                    if with_confidence:
-                        source_conf, target_text = line
-                        if not source_conf: # empty
-                            line = target_text
-                        elif type(source_conf[0]) is tuple: # prob line
-                            line = ''.join([char for char, prob in source_conf]) + target_text
-                        else: # confmat
-                            line = ''.join([chars for chunk in source_conf
-                                            for chars, prob in chunk]) + target_text
-                    line = unicodedata.normalize('NFC', line)
-                    chars.update(set(line))
         chars = sorted(list(chars))
         if len(chars) > self.voc_size:
             # incremental training
@@ -610,9 +557,30 @@ class Sequence2Sequence(object):
             self.mapping = (c_i, i_c)
             self.voc_size = len(c_i)
             self._reconfigure_for_mapping()
+        return num_lines
+    
+    def train(self, filenames, val_filenames=None):
+        '''train model on given text files.
+        
+        Pass the character sequences of lines in `filenames`, paired into
+        source and target (and possibly, source confidence values),
+        to the loop training model weights with stochastic gradient descent.
+        The generator will open the file, looping over the complete set (epoch)
+        as long as validation error does not increase in between (early stopping).
+        
+        Validate on a random fraction of lines automatically separated before,
+        unless `val_filenames` is given, in which case only those files are used
+        for validation.
+        '''
+        from keras.callbacks import EarlyStopping, TerminateOnNaN
+        from .callbacks import StopSignalCallback, ResetStatesCallback
+        from .keras_train import fit_generator_autosized, evaluate_generator_autosized
+
+        num_lines = self.map_files(filenames)
         self.logger.info('Training on "%d" files with %d lines', len(filenames), num_lines)
         if val_filenames:
-            self.logger.info('Validating on "%d" files', len(val_filenames))
+            num_lines = self.map_files(val_filenames)
+            self.logger.info('Validating on "%d" files with %d lines', len(val_filenames), num_lines)
             split_rand = None
         else:
             self.logger.info('Validating on random 20% lines from those files')
@@ -623,24 +591,18 @@ class Sequence2Sequence(object):
                                       mode='min', restore_best_weights=True)
         callbacks = [earlystopping, TerminateOnNaN(),
                      StopSignalCallback(logger=self.logger)]
-        if self.stateful: # reset states between batches of different lines/documents (controlled by generator)
-            reset_cb = ResetStatesCallback(self.encoder_model, logger=self.logger)
-            callbacks.append(reset_cb)
-        else:
-            reset_cb = None
         history = fit_generator_autosized(
             self.encoder_decoder_model,
-            self.gen_data(filenames, split_rand, train=True, reset_cb=reset_cb),
+            self.gen_data(filenames, split_rand, train=True),
             epochs=self.epochs,
             workers=1,
             # (more than 1 would effectively increase epoch size)
-            use_multiprocessing=not self.scheduled_sampling and not self.stateful,
+            use_multiprocessing=not self.scheduled_sampling,
             # (cannot access session/graph for scheduled sampling in other process,
             #  cannot access model for reset callback in other process)
-            validation_data=self.gen_data(val_filenames or filenames, split_rand, train=False, reset_cb=reset_cb),
+            validation_data=self.gen_data(val_filenames or filenames, split_rand, train=False),
             verbose=1 if self.progbars else 0,
-            callbacks=callbacks,
-            validation_callbacks=[reset_cb] if self.stateful else None)
+            callbacks=callbacks)
         
         if 'val_loss' in history.history:
             self.logger.info('training finished with val_loss %f',
@@ -665,52 +627,36 @@ class Sequence2Sequence(object):
         printing source/target and predicted lines,
         and the overall calculated character and word error rates of source (OCR)
         and prediction (greedy/beamed) against target (GT).
-        (Data are always split by line, regardless of stateless/stateful mode.)
         
         If `fast`, then skip beam search for single lines, and process all batches
         in parallel greedily.
         '''
         assert self.status == 2
-        #would still be teacher forcing:
-        # loss = s2s.encoder_decoder_model.evaluate_generator_autosized(s2s.gen_data(filename))
-        # output = s2s.encoder_decoder_model.predict_generator_autosized(s2s.gen_data(filename))
-        counts = [1e-9, 0, 0, 0, 1e-9, 0, 0, 0, 0]
+        counts = [1e-9, 0, 0, 0, 1e-9, 0, 0, 0, 0., 0., 0]
         for batch_no, batch in enumerate(self.gen_lines(filenames, False)):
             source_lines, target_lines, sourceconf_lines = batch
             #bar.update(1)
-            if self.stateful:
-                # model controlled by caller (batch prediction)
-                #self.logger.debug('resetting encoder for line', line_no, train)
-                # does not work for some reason (never returns,
-                # even if passing self.sess.as_default() and self.graph.as_default()):
-                #self.encoder_decoder_model.reset_states()
-                self.encoder_model.reset_states()
-                #self.decoder_model.reset_states() # not stateful yet
             
             # vectorize:
             encoder_input_data, _, _, _ = self.vectorize_lines(*batch)
 
             if fast:
-                _, greedy_lines = self.decode_batch_greedy(encoder_input_data)
-                beamed_lines = greedy_lines # dummy
+                _, greedy_lines, greedy_scores, _ = self.decode_batch_greedy(encoder_input_data)
+                beamed_lines, beamed_scores = greedy_lines, greedy_scores # dummy
             else:
                 # avoid repeating encoder in both functions (greedy and beamed):
                 encoder_outputs = self.encoder_model.predict_on_batch(encoder_input_data)
                 # decode lines individually:
-                greedy_lines = {}
-                beamed_lines = {}
+                greedy_lines, greedy_scores = ['' for _ in source_lines], [0. for _ in source_lines]
+                beamed_lines, beamed_scores = ['' for _ in source_lines], [0. for _ in source_lines]
                 for j in range(len(source_lines)):
                     line_no = batch_no * self.batch_size + j
-                    greedy_lines[j], _ = self.decode_sequence_greedy(
+                    greedy_lines[j], greedy_scores[j], _ = self.decode_sequence_greedy(
                         encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs])
-                    try: # query only 1-best
-                        beamed_lines[j], _ = next(self.decode_sequence_beam(
-                            encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs]))
-                    except StopIteration:
-                        self.logger.error('no beam decoder result within processing limits for '
-                                          '"%s\t%s" line %d',
-                                          source_lines[j].rstrip(), target_lines[j].rstrip(), line_no+1)
-                        beamed_lines[j] = ''
+                    # query only 1-best
+                    beamed_lines[j], beamed_scores[j], _ = next(self.decode_sequence_beam(
+                        source_seq=encoder_input_data[j], # needed for rejection fallback
+                        encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs]))
             
             for j in range(len(source_lines)):
                 if not source_lines[j] or not target_lines[j]:
@@ -718,8 +664,8 @@ class Sequence2Sequence(object):
                 
                 self.logger.info('Source input              : %s', source_lines[j].rstrip(u'\n'))
                 self.logger.info('Target output             : %s', target_lines[j].rstrip(u'\n'))
-                self.logger.info('Target prediction (greedy): %s', greedy_lines[j].rstrip(u'\n'))
-                self.logger.info('Target prediction (beamed): %s', beamed_lines[j].rstrip(u'\n'))
+                self.logger.info('Target prediction (greedy): %s [%.2f]', greedy_lines[j].rstrip(u'\n'), greedy_scores[j])
+                self.logger.info('Target prediction (beamed): %s [%.2f]', beamed_lines[j].rstrip(u'\n'), beamed_scores[j])
                 
                 #metric = self.aligner.get_levenshtein_distance
                 metric = self.aligner.get_adjusted_distance
@@ -745,9 +691,13 @@ class Sequence2Sequence(object):
                 counts[5] += w_edits_ocr
                 counts[6] += w_edits_greedy
                 counts[7] += w_edits_beamed
-                counts[8] += 1
+                counts[8] += sum(greedy_scores)
+                counts[9] += sum(beamed_scores)
+                counts[10] += len(greedy_lines)
 
-        self.logger.info('finished %d lines', counts[8])
+        self.logger.info('finished %d lines', counts[10])
+        self.logger.info('ppl greedy: %.3f', math.exp(counts[8]/counts[10]))
+        self.logger.info('ppl beamed: %.3f', math.exp(counts[9]/counts[10]))
         self.logger.info("CER OCR:    %.3f", counts[1] / counts[0])
         self.logger.info("CER greedy: %.3f", counts[2] / counts[0])
         self.logger.info("CER beamed: %.3f", counts[3] / counts[0])
@@ -796,9 +746,6 @@ class Sequence2Sequence(object):
                     line_schedules = np.random.uniform(0, 1, self.batch_size)
                 else:
                     line_schedules = None
-                if reset_cb and self.stateful:
-                    # model controlled by callbacks (training)
-                    reset_cb.reset("")
                 # vectorize:
                 encoder_input_data, decoder_input_data, decoder_output_data, decoder_output_weights = (
                     self.vectorize_lines(source_lines, target_lines,
@@ -811,7 +758,7 @@ class Sequence2Sequence(object):
                         # ensure the generator thread gets to see the same tf graph:
                         # with self.sess.as_default():
                         with self.graph.as_default():
-                            decoder_input_data_sampled, _ = self.decode_batch_greedy(encoder_input_data)
+                            decoder_input_data_sampled, _, _, _ = self.decode_batch_greedy(encoder_input_data)
                             # overwrite scheduled lines with data sampled from decoder instead of GT:
                             decoder_input_data.resize( # zero-fill larger time-steps (in-place)
                                 decoder_input_data_sampled.shape)
@@ -1097,7 +1044,11 @@ class Sequence2Sequence(object):
                 if config['depth'][()] == self.depth - 1:
                     was_shallow = True
             self.logger.info('Transferring model from "%s"', filename)
-            load_weights_from_hdf5_group_by_name(file, self.encoder_decoder_model.layers,
+            load_weights_from_hdf5_group_by_name(file,
+                                                 map(lambda layer: # LM does not have attention wrapper in top HL
+                                                     layer.cell if layer.name == 'decoder_lstm_%d' % self.depth
+                                                     else layer,
+                                                     self.encoder_decoder_model.layers),
                                                  skip_mismatch=True, reshape=False)
             if was_shallow:
                 self.logger.info('fixing weights from shallower model')
@@ -1111,11 +1062,16 @@ class Sequence2Sequence(object):
     def decode_batch_greedy(self, encoder_input_data):
         '''Predict from one batch of lines array without alternatives.
         
-        Use encoder input lines array `encoder_input_data` (in a full batch).
+        Use encoder input lines array `encoder_input_data` (in a full batch)
+        to produce some encoder output to attend to.
+        
         Start decoder with start-of-sequence, then keep decoding until
         end-of-sequence is found or output length is way off.
-        Decode by using the best predicted output character as next input.
+        Decode by using the full output distribution as next input.
         Pass decoder initial/final states from character to character.
+        
+        Return a 4-tuple of full output array, output strings, entropies, and
+        soft alignments (input-output matrices as list of list of vectors).
         '''
         
         encoder_outputs = self.encoder_model.predict_on_batch(encoder_input_data)
@@ -1126,33 +1082,67 @@ class Sequence2Sequence(object):
         decoder_input_data = np.zeros((batch_size, 1, self.voc_size), dtype=np.uint32)
         decoder_output_data = np.zeros((batch_size, batch_length * 2, self.voc_size), dtype=np.uint32)
         decoder_output_sequences = [''] * batch_size
+        decoder_output_scores = [0.] * batch_size
+        decoder_output_alignments = [[]] * batch_size
         for i in range(batch_length * 2):
             decoder_output_data[:, i] = decoder_input_data[:, -1]
             output = self.decoder_model.predict_on_batch([decoder_input_data, encoder_output_data] + states_values)
-            output_scores = output[0]
-            # sampling from the raw distribution: decoder_input_data = output_scores
-            indexes = np.nanargmax(output_scores, axis=2)
-            decoder_input_data = np.eye(self.voc_size, dtype=np.uint32)[indexes]
-            for j, idx in enumerate(indexes):
-                if decoder_output_sequences[j].endswith('\n'):
+            scores = output[0]
+            alignment = output[1]
+            indexes = np.nanargmax(scores, axis=2)
+            #decoder_input_data = np.eye(self.voc_size, dtype=np.uint32)[indexes] # unit vectors
+            decoder_input_data = scores # soft/confidence input (much better)
+            logscores = -np.log(scores)
+            for j, idx in enumerate(indexes[:, 0]):
+                if decoder_output_sequences[j].endswith('\n') or not np.any(encoder_input_data[j]):
                     continue
                 decoder_output_sequences[j] += self.mapping[1][int(idx)]
-            states_values = list(output[1:])
-        return decoder_output_data, decoder_output_sequences
+                decoder_output_scores[j] += logscores[j, -1, idx]
+                decoder_output_alignments[j].append(alignment)
+            states_values = list(output[2:])
+        for j in range(batch_size):
+            if len(decoder_output_sequences[j]) > 0:
+                decoder_output_scores[j] /= len(decoder_output_sequences[j])
+        # # calculate rejection scores (decoder input = encoder input):
+        # decoder_input_data = np.insert(encoder_input_data, 0, 0., axis=1) # add start-of-sequence
+        # decoder_rej_sequences = [''] * batch_size
+        # decoder_rej_scores = [0.] * batch_size
+        # output = self.decoder_model.predict_on_batch([decoder_input_data, encoder_output_data] + encoder_outputs[1:])
+        # logscores = np.log(output[0])
+        # for i in range(batch_length):
+        #     indexes = np.nanargmax(encoder_input_data[:, i], axis=1)
+        #     for j, idx in enumerate(indexes):
+        #         if decoder_rej_sequences[j].endswith('\n') or not np.any(encoder_input_data[j]):
+        #             continue
+        #         decoder_rej_sequences[j] += self.mapping[1][int(idx)]
+        #         decoder_rej_scores[j] -= logscores[j, i, idx]
+        # for j in range(batch_size):
+        #     if len(decoder_rej_sequences[j]) > 0:
+        #         decoder_rej_scores[j] /= len(decoder_rej_sequences[j])
+        #         # select rejection if better than decoder output:
+        #         if decoder_rej_scores[j] < decoder_output_scores[j]:
+        #             decoder_output_sequences[j] = decoder_rej_sequences[j]
+        #             decoder_output_scores[j] = decoder_rej_scores[j]
+        return decoder_output_data, decoder_output_sequences, decoder_output_scores, decoder_output_alignments
     
     def decode_sequence_greedy(self, source_seq=None, encoder_outputs=None):
         '''Predict from one line vector without alternatives.
         
-        Use encoder input line vector `source_seq` (in a batch of size 1).
-        If `encoder_outputs` is given, bypass that step to protect the encoder state.
+        Use encoder input line vector `source_seq` (in a batch of size 1)
+        to produce some encoder output to attend to.
+        If `encoder_outputs` is given, then bypass that step.
+        
         Start decoder with start-of-sequence, then keep decoding until
         end-of-sequence is found or output length is way off.
-        Decode by using the best predicted output character as next input.
+        Decode by using the full output distribution as next input.
         Pass decoder initial/final states from character to character.
+        
+        Return a 3-tuple of output string, entropy, and soft alignment
+        (input-output matrix as list of vectors).
         '''
         
         # Encode the source as state vectors.
-        if source_seq is not None:
+        if encoder_outputs is None:
             encoder_outputs = self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
         attended_seq = encoder_outputs[0]
         states_values = encoder_outputs[1:]
@@ -1165,70 +1155,100 @@ class Sequence2Sequence(object):
         # (to simplify, here we assume a batch of size 1).
         decoded_text = ''
         decoded_score = 0
+        alignments = []
         for _ in range(attended_seq.shape[1] * 2):
             output = self.decoder_model.predict_on_batch([target_seq, attended_seq] + states_values)
-            output_scores = output[0]
-            output_states = output[1:]
+            scores = output[0]
+            alignment = output[1]
+            states = output[2:]
             
             # Sample a token:
-            idx = np.nanargmax(output_scores[0, -1, :])
-            score = -np.log(output_scores[0, -1, idx])
+            idx = np.nanargmax(scores[0, -1, :])
+            score = -np.log(scores[0, -1, idx])
             char = self.mapping[1][idx]
             if char == '': # underspecification
-                output_scores[0, -1, idx] = np.nan
-                idx = np.nanargmax(output_scores[0, -1, :])
-                score = -np.log(output_scores[0, -1, idx])
+                scores[0, -1, idx] = np.nan
+                idx = np.nanargmax(scores[0, -1, :])
+                score = -np.log(scores[0, -1, idx])
                 char = self.mapping[1][idx]
             decoded_text += char
             decoded_score += score
+            alignments.append(alignment)
             # Exit condition: end-of-sequence character.
             if char == '\n':
                 break
             
             # Update the target sequence (of length 1):
-            target_seq = np.eye(self.voc_size, dtype=np.uint32)[[[[idx]]]]
+            #target_seq = np.eye(self.voc_size, dtype=np.uint32)[[[[idx]]]]
+            target_seq = scores # soft/confidence input (better)
             # Update states:
-            states_values = list(output_states)
+            states_values = list(states)
         
-        return decoded_text, decoded_score / len(decoded_text)
+        return decoded_text, decoded_score / len(decoded_text), alignments
     
     def decode_sequence_beam(self, source_seq=None, encoder_outputs=None):
         '''Predict from one line vector with alternatives.
         
-        Use encoder input line vector `source_seq` (in a batch of size 1).
-        If `source_state` is given, bypass that step to protect the encoder state.
+        Use encoder input line vector `source_seq` (in a batch of size 1)
+        to produce some encoder output to attend to.
+        If `encoder_outputs` is given, then bypass that step.
+        
         Start decoder with start-of-sequence, then keep decoding until
         end-of-sequence is found or output length is way off, repeatedly.
         Decode by using the best predicted output characters and several next-best
         alternatives (up to some degradation threshold) as next input.
-        Follow-up on the n-best overall candidates (estimated by accumulated
+        Follow-up on the N best overall candidates (estimated by accumulated
         score, normalized by length and prospective cost), i.e. do A*-like
-        breadth-first search.
+        breadth-first search, with N equal `batch_size`.
         Pass decoder initial/final states from character to character,
         for each candidate respectively.
+        Reserve 1 candidate per iteration for running through `source_seq`
+        (as a rejection fallback) to ensure that path does not fall off the
+        beam and at least one solution can be found within the search limits.
+        
+        For each solution, yield a 3-tuple of output string, entropy, and soft alignment
+        (input-output matrix as list of vectors).
         '''
         from bisect import insort_left
         
         # Encode the source as state vectors.
-        if source_seq is not None:
+        if encoder_outputs is None:
             encoder_outputs = self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
         attended_seq = encoder_outputs[0] # constant
         states_values = encoder_outputs[1:]
         
-        next_beam = [Node(state=states_values, value='', cost=0.0, extras=len(attended_seq))]
+        next_beam = []
         final_beam = []
+        # keep track of source_seq (rejection) beside the beam so it cannot fall off:
+        rej_node = Node(state=states_values,
+                        value='', cost=0.0,
+                        extras=(len(attended_seq), []))
         # generator will raise StopIteration if no hypotheses after loop
-        max_batches = attended_seq.shape[1] * 3 # how many batches (i.e. char hypotheses) will be processed per line?
+        max_batches = attended_seq.shape[1] * 2 # how many batches (i.e. char hypotheses) will be processed per line?
         for l in range(max_batches):
             beam = []
+            if rej_node:
+                if rej_node.value == '\n': # end-of-sequence symbol?
+                    # add fallback as possible solution
+                    insort_left(final_beam, rej_node)
+                    # self.logger.debug('%02d found rej solution %.2f/"%s"',
+                    #                   l, rej_node.pro_cost(), ''.join(rej_node.to_sequence_of_values()).strip('\n'))
+                    rej_node = None
+                else:
+                    # add fallback as additional hypothesis (regardless of position in beam)
+                    beam.append(rej_node)
+                    # self.logger.debug('%02d rej hypothesis %.2f/"%s"',
+                    #                   l, rej_node.pro_cost(), ''.join(rej_node.to_sequence_of_values()).strip('\n'))
             while next_beam:
                 node = next_beam.pop()
                 if node.value == '\n': # end-of-sequence symbol?
                     insort_left(final_beam, node)
-                    #self.logger.debug('found new solution by newline "%s"', ''.join(node.to_sequence_of_values()))
+                    # self.logger.debug('%02d found new solution %.2f/"%s"',
+                    #                   l, node.pro_cost(), ''.join(node.to_sequence_of_values()).strip('\n'))
                 else: # normal step
                     beam.append(node)
-                    #print('added new hypothesis "%s"' % bytes([i for i in n.to_sequence_of_values()]).decode("utf-8", "ignore"))
+                    # self.logger.debug('%02d new hypothesis %.2f/"%s"',
+                    #                   l, node.pro_cost(), ''.join(node.to_sequence_of_values()).strip('\n'))
                 if len(beam) >= self.batch_size:
                     break # enough for one batch
             if not beam:
@@ -1247,13 +1267,31 @@ class Sequence2Sequence(object):
                           for layer in range(len(beam[0].state))] # stack layers across batch
             output = self.decoder_model.predict_on_batch([target_seq, attended_seq] + states_val)
             scores_output = output[0][:, -1] # only last timestep
-            states_output = list(output[1:]) # from (layers) tuple
+            alignment = output[1][:, -1]
+            states_output = list(output[2:]) # from (layers) tuple
             for i, node in enumerate(beam): # iterate over batch (1st dim)
                 # unstack layers for current sample:
                 states = [layer[i:i+1] for layer in states_output]
                 scores = scores_output[i]
                 scores_order = np.argsort(scores) # still in reverse order (worst first)
                 logscores = -np.log(scores[scores_order])
+                # add fallback/rejection candidates regardless of beam threshold:
+                #source_pos = np.argmax(alignment[i])
+                rej_idx = -1
+                if node is rej_node:
+                    # follow up on input string (as rejection candidate)
+                    source_scores = source_seq[node.length - 1]
+                    if np.any(source_scores):
+                        rej_idx = np.nanargmax(source_scores)
+                        rej_node = Node(parent=node, state=states,
+                                        value=self.mapping[1][rej_idx],
+                                        cost=-np.log(scores[rej_idx]),
+                                        extras=(node.extras[0], node.extras[1] + [alignment[i]]))
+                    else:
+                        # we slipped into padding without seeing end-of-sequence (newline)
+                        rej_node = None # give up
+                    #continue # prevent rejection right-branching
+                # determine beam width from beam threshold to add normal candidates:
                 highest = scores[scores_order[-1]]
                 beampos = self.voc_size - np.searchsorted(scores[scores_order], # variable beam width
                                                           highest * self.beam_threshold_in)
@@ -1262,20 +1300,26 @@ class Sequence2Sequence(object):
                 # follow up on best predictions, in true order (best first):
                 for idx, logscore in zip(reversed(scores_order), reversed(logscores)):
                     pos += 1
-                    if pos > beampos:
+                    if pos > beampos or pos > self.beam_width_in:
                         break # ignore further alternatives
+                    if idx == rej_idx:
+                        continue # no duplicates when left- or right-branching
                     value = self.mapping[1][idx]
                     if (np.isnan(logscore) or
                         value == ''): # underspecification
                         continue # ignore this alternative
                     new_node = Node(parent=node, state=states,
                                     value=value, cost=logscore,
-                                    extras=node.extras)
+                                    extras=(node.extras[0], node.extras[1] + [alignment[i]]))
                     insort_left(next_beam, new_node)
             if len(next_beam) > max_batches * self.batch_size: # more than can ever be processed within limits?
-                next_beam = next_beam[:max_batches*self.batch_size] # to save memory, keep only best
-        for node in final_beam[:self.beam_width_out]:
-            yield ''.join(node.to_sequence_of_values()), node.pro_cost()
+                next_beam = next_beam[-max_batches*self.batch_size:] # to save memory, keep only best
+        if next_beam and len(final_beam) < self.beam_width_out:
+            self.logger.warning('max_batches %d is not enough for beam_width_out %d: got only %d, still %d left',
+                                max_batches, self.beam_width_out, len(final_beam), len(next_beam))
+        while final_beam:
+            node = final_beam.pop()
+            yield ''.join(node.to_sequence_of_values()), node.cum_cost / (node.length - 1), node.extras[1]
 
 class Node(object):
     def __init__(self, state, value, cost, parent=None, extras=None):
@@ -1285,7 +1329,7 @@ class Node(object):
         self.state = state # recurrent layer hidden state
         self.cum_cost = parent.cum_cost + cost if parent else cost # e.g. -log(p) of sequence up to current node (including)
         self.length = 1 if parent is None else parent.length + 1
-        self.extras = extras # node identifier
+        self.extras = extras # tuple: length of source sequence, and alignment list
         self._sequence = None
     
     def to_sequence(self):
@@ -1303,10 +1347,10 @@ class Node(object):
     
     # for sort order, use cumulative costs relative to length
     # (in order to get a fair comparison across different lengths,
-    #  and hence, depth-first search), and use inverse order
+    #  and hence, breadth-first search), and use inverse order
     # (so the faster pop() can be used)
     def pro_cost(self):
-        return (self.cum_cost + 0.5 * math.fabs(self.length - self.extras)) / self.length
+        return - (self.cum_cost + 0.5 * math.fabs(self.length - self.extras[0])) / self.length
     
     def __lt__(self, other):
         return self.pro_cost() < other.pro_cost()

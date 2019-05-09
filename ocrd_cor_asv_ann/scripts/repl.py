@@ -20,18 +20,20 @@ def cli():
     for single line correction.
     """
     # load pythonrc even with -i
-    if 'PYTHONSTARTUP' in os.environ:
-        exec(open(os.environ['PYTHONSTARTUP']).read())
     historyPath = os.path.expanduser("~/." + __name__ + "_history")
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig()
+    logging.getLogger(__name__).setLevel(logging.DEBUG)
     
     s2s = Sequence2Sequence(logger=logging.getLogger(__name__), progbars=True)
     def transcode_line(source_line):
+        from matplotlib import pyplot
         s2s.encoder_model.reset_states()
         encoder_input_data, _, _, _ = s2s.vectorize_lines([source_line + '\n'], [source_line + '\n'])
-        target_line, score = s2s.decode_sequence_greedy(encoder_input_data[0])
+        target_line, score, alignments = s2s.decode_sequence_greedy(encoder_input_data[0])
+        pyplot.imshow(np.squeeze(np.array(alignments)))
+        pyplot.show()
         return target_line, score
     def unvectorize(data):
         lines = []

@@ -269,7 +269,7 @@ class AttentionCellWrapper(Layer):
                             training=None):
         """Complete attentive cell transformation, if `attend_after=False`.
         """
-        attention_h, new_attention_states = self.attention_call(
+        attention_h, new_attention_states, alignment = self.attention_call(
             inputs=inputs,
             cell_states=cell_states,
             attended=attended,
@@ -286,6 +286,7 @@ class AttentionCellWrapper(Layer):
             cell_output, new_cell_states = self.cell.call(cell_input, cell_states)
 
         output = self._get_output(cell_output, attention_h)
+        output = concatenate([output, alignment])
 
         return output, new_cell_states + new_attention_states
 
@@ -526,11 +527,10 @@ class DenseAnnotationAttention(AttentionCellWrapper):
         if attended_mask is not None:
             e = e * K.cast(K.expand_dims(attended_mask, -1), K.dtype(e))
 
-        # weighted average of attended
         a = e / K.sum(e, axis=1, keepdims=True)
         c = K.sum(a * attended, axis=1, keepdims=False)
 
-        return c, [c]
+        return c, [c], K.squeeze(a, -1)
 
     def attention_build(self, input_shape, cell_state_size, attended_shape):
         if not len(attended_shape) == 2:
