@@ -11,8 +11,9 @@ from ..lib.seq2seq import Sequence2Sequence
 # click.File is impossible since we do not now a priori whether
 # we have to deal with pickle dumps (mode 'rb', includes confidence)
 # or plain text files (mode 'r')
+@click.option('--fast', is_flag=True, help='only decode greedily')
 @click.argument('data', nargs=-1, type=click.Path(dir_okay=False, exists=True))
-def cli(load_model, data):
+def cli(load_model, fast, data):
     """Evaluate a correction model.
     
     Load a sequence-to-sequence model from the given path.
@@ -30,4 +31,4 @@ def cli(load_model, data):
     s2s.configure()
     s2s.load_weights(load_model)
     
-    s2s.evaluate(data)
+    s2s.evaluate(data, fast)

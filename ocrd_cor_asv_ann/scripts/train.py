@@ -17,11 +17,13 @@ from ..lib.seq2seq import Sequence2Sequence
               type=click.IntRange(min=1, max=9128))
 @click.option('-d', '--depth', default=2, help='number of stacked hidden layers',
               type=click.IntRange(min=1, max=10))
+@click.option('-v', '--valdata', multiple=True, help='file to use for validation (instead of random split)',
+              type=click.Path(dir_okay=False, exists=True))
 # click.File is impossible since we do not now a priori whether
 # we have to deal with pickle dumps (mode 'rb', includes confidence)
 # or plain text files (mode 'r')
 @click.argument('data', nargs=-1, type=click.Path(dir_okay=False, exists=True))
-def cli(save_model, load_model, init_model, reset_encoder, width, depth, data):
+def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata, data):
     """Train a correction model.
     
     Configure a sequence-to-sequence model with the given parameters.
@@ -34,6 +36,8 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, data):
     If given `reset_encoder`, re-initialise the encoder weights afterwards.
     
     Then, regardless, train on the file paths `data` using early stopping.
+    If no `valdata` were given, split off a random fraction of lines for
+    validation. Otherwise, use only those files for validation.
     
     If the training has been successful, save the model under `save_model`.
     """
@@ -72,7 +76,7 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, data):
                     initializer_method = getattr(var_arg, 'initializer')
                     initializer_method.run(session=session)
     
-    s2s.train(data)
+    s2s.train(data, valdata or None)
     if s2s.status > 1:
         s2s.save(save_model)
     

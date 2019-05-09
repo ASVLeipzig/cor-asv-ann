@@ -545,32 +545,23 @@ class Sequence2Sequence(object):
         
         return K.in_train_phase(lowrank + underspecification, 0.)
     
-    def train(self, filenames):
-        '''train model on text files
+    def train(self, filenames, val_filenames=None):
+        '''train model on given text files.
         
-        Pass the character sequence of lines in `filenames`, paired into
+        Pass the character sequences of lines in `filenames`, paired into
         source and target (and possibly, source confidence values),
         to the loop training model weights with stochastic gradient descent.
         The generator will open the file, looping over the complete set (epoch)
         as long as validation error does not increase in between (early stopping).
-        Validate on a random fraction of lines automatically separated before.
-        (Data are always split by line, regardless of stateless/stateful mode.)
+        
+        Validate on a random fraction of lines automatically separated before,
+        unless `val_filenames` is given, in which case only those files are used
+        for validation.
         '''
         from keras.callbacks import EarlyStopping, TerminateOnNaN
         from .callbacks import StopSignalCallback, ResetStatesCallback
         from .keras_train import fit_generator_autosized, evaluate_generator_autosized
         
-        # Run training
-        earlystopping = EarlyStopping(monitor='val_loss', patience=3, verbose=1,
-                                      mode='min', restore_best_weights=True)
-        callbacks = [earlystopping, TerminateOnNaN(),
-                     StopSignalCallback(logger=self.logger)]
-        if self.stateful: # reset states between batches of different lines/documents (controlled by generator)
-            reset_cb = ResetStatesCallback(self.encoder_model, logger=self.logger)
-            callbacks.append(reset_cb)
-        else:
-            reset_cb = None
-            
         # todo: shuffle lines
         num_lines = 0
         chars = set(self.mapping[0].keys()) # includes '' (0)
@@ -583,10 +574,34 @@ class Sequence2Sequence(object):
                 for line in file:
                     if with_confidence:
                         source_conf, target_text = line
-                        line = ''.join([char for char, prob in source_conf]) + '\t' + target_text
+                        if not source_conf: # empty
+                            line = target_text
+                        elif type(source_conf[0]) is tuple: # prob line
+                            line = ''.join([char for char, prob in source_conf]) + target_text
+                        else: # confmat
+                            line = ''.join([chars for chunk in source_conf
+                                            for chars, prob in chunk]) + target_text
                     line = unicodedata.normalize('NFC', line)
                     chars.update(set(line))
                     num_lines += 1
+        for filename in val_filenames or []:
+            # todo: there must be a better way to detect this:
+            with_confidence = filename.endswith('.pkl')
+            with open(filename, 'rb' if with_confidence else 'r') as file:
+                if with_confidence:
+                    file = pickle.load(file) # read once
+                for line in file:
+                    if with_confidence:
+                        source_conf, target_text = line
+                        if not source_conf: # empty
+                            line = target_text
+                        elif type(source_conf[0]) is tuple: # prob line
+                            line = ''.join([char for char, prob in source_conf]) + target_text
+                        else: # confmat
+                            line = ''.join([chars for chunk in source_conf
+                                            for chars, prob in chunk]) + target_text
+                    line = unicodedata.normalize('NFC', line)
+                    chars.update(set(line))
         chars = sorted(list(chars))
         if len(chars) > self.voc_size:
             # incremental training
@@ -596,8 +611,23 @@ class Sequence2Sequence(object):
             self.voc_size = len(c_i)
             self._reconfigure_for_mapping()
         self.logger.info('Training on "%d" files with %d lines', len(filenames), num_lines)
-        split_rand = np.random.uniform(0, 1, (num_lines,)) # reserve split fraction at random line numbers
+        if val_filenames:
+            self.logger.info('Validating on "%d" files', len(val_filenames))
+            split_rand = None
+        else:
+            self.logger.info('Validating on random 20% lines from those files')
+            split_rand = np.random.uniform(0, 1, (num_lines,)) # reserve split fraction at random line numbers
         
+        # Run training
+        earlystopping = EarlyStopping(monitor='val_loss', patience=3, verbose=1,
+                                      mode='min', restore_best_weights=True)
+        callbacks = [earlystopping, TerminateOnNaN(),
+                     StopSignalCallback(logger=self.logger)]
+        if self.stateful: # reset states between batches of different lines/documents (controlled by generator)
+            reset_cb = ResetStatesCallback(self.encoder_model, logger=self.logger)
+            callbacks.append(reset_cb)
+        else:
+            reset_cb = None
         history = fit_generator_autosized(
             self.encoder_decoder_model,
             self.gen_data(filenames, split_rand, train=True, reset_cb=reset_cb),
@@ -607,7 +637,7 @@ class Sequence2Sequence(object):
             use_multiprocessing=not self.scheduled_sampling and not self.stateful,
             # (cannot access session/graph for scheduled sampling in other process,
             #  cannot access model for reset callback in other process)
-            validation_data=self.gen_data(filenames, split_rand, train=False, reset_cb=reset_cb),
+            validation_data=self.gen_data(val_filenames or filenames, split_rand, train=False, reset_cb=reset_cb),
             verbose=1 if self.progbars else 0,
             callbacks=callbacks,
             validation_callbacks=[reset_cb] if self.stateful else None)
@@ -615,7 +645,8 @@ class Sequence2Sequence(object):
         if 'val_loss' in history.history:
             self.logger.info('training finished with val_loss %f',
                              min(history.history['val_loss']))
-            if np.isnan(history.history['loss'][-1]):
+            if (np.isnan(history.history['val_loss'][-1]) or
+                earlystopping.stopped_epoch == 0):
                 # recover weights (which TerminateOnNaN prevented EarlyStopping from doing)
                 self.encoder_decoder_model.set_weights(earlystopping.best_weights)
             self._resync_decoder()
@@ -624,7 +655,7 @@ class Sequence2Sequence(object):
             self.logger.critical('training failed')
             self.status = 1
     
-    def evaluate(self, filenames):
+    def evaluate(self, filenames, fast=False):
         '''evaluate model on text files
         
         Pass the character sequence of lines in `filenames`, paired into
@@ -635,12 +666,15 @@ class Sequence2Sequence(object):
         and the overall calculated character and word error rates of source (OCR)
         and prediction (greedy/beamed) against target (GT).
         (Data are always split by line, regardless of stateless/stateful mode.)
+        
+        If `fast`, then skip beam search for single lines, and process all batches
+        in parallel greedily.
         '''
         assert self.status == 2
         #would still be teacher forcing:
         # loss = s2s.encoder_decoder_model.evaluate_generator_autosized(s2s.gen_data(filename))
         # output = s2s.encoder_decoder_model.predict_generator_autosized(s2s.gen_data(filename))
-        counts = [1e-9, 0, 0, 0, 1e-9, 0, 0, 0]
+        counts = [1e-9, 0, 0, 0, 1e-9, 0, 0, 0, 0]
         for batch_no, batch in enumerate(self.gen_lines(filenames, False)):
             source_lines, target_lines, sourceconf_lines = batch
             #bar.update(1)
@@ -655,40 +689,47 @@ class Sequence2Sequence(object):
             
             # vectorize:
             encoder_input_data, _, _, _ = self.vectorize_lines(*batch)
+
+            if fast:
+                _, greedy_lines = self.decode_batch_greedy(encoder_input_data)
+                beamed_lines = greedy_lines # dummy
+            else:
+                # avoid repeating encoder in both functions (greedy and beamed):
+                encoder_outputs = self.encoder_model.predict_on_batch(encoder_input_data)
+                # decode lines individually:
+                greedy_lines = {}
+                beamed_lines = {}
+                for j in range(len(source_lines)):
+                    line_no = batch_no * self.batch_size + j
+                    greedy_lines[j], _ = self.decode_sequence_greedy(
+                        encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs])
+                    try: # query only 1-best
+                        beamed_lines[j], _ = next(self.decode_sequence_beam(
+                            encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs]))
+                    except StopIteration:
+                        self.logger.error('no beam decoder result within processing limits for '
+                                          '"%s\t%s" line %d',
+                                          source_lines[j].rstrip(), target_lines[j].rstrip(), line_no+1)
+                        beamed_lines[j] = ''
             
-            # avoid repeating encoder in both functions (greedy and beamed),
-            encoder_outputs = self.encoder_model.predict_on_batch(encoder_input_data)
             for j in range(len(source_lines)):
                 if not source_lines[j] or not target_lines[j]:
                     continue # from partially filled batch
                 
                 self.logger.info('Source input              : %s', source_lines[j].rstrip(u'\n'))
                 self.logger.info('Target output             : %s', target_lines[j].rstrip(u'\n'))
-                
-                line_no = batch_no * self.batch_size + j
-                greedy_line, greedy_score = self.decode_sequence_greedy(
-                    encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs])
-                self.logger.info('Target prediction (greedy): %s [%.2f]', greedy_line.rstrip(u'\n'), greedy_score)
-                
-                try: # query only 1-best
-                    beamed_line, beamed_score = next(self.decode_sequence_beam(
-                        encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs]))
-                    self.logger.info('Target prediction (beamed): %s [%.2f]', beamed_line.rstrip(u'\n'), beamed_score)
-                except StopIteration:
-                    self.logger.error('no beam decoder result within processing limits for '
-                                      '"%s\t%s" line %d',
-                                      source_lines[j].rstrip(), target_lines[j].rstrip(), line_no+1)
-                    beamed_line = ''
+                self.logger.info('Target prediction (greedy): %s', greedy_lines[j].rstrip(u'\n'))
+                self.logger.info('Target prediction (beamed): %s', beamed_lines[j].rstrip(u'\n'))
                 
                 #metric = self.aligner.get_levenshtein_distance
                 metric = self.aligner.get_adjusted_distance
                 
                 c_edits_ocr, c_total = metric(source_lines[j], target_lines[j])
-                c_edits_greedy, _ = metric(greedy_line, target_lines[j])
-                c_edits_beamed, _ = metric(beamed_line, target_lines[j])
+                c_edits_greedy, _ = metric(greedy_lines[j], target_lines[j])
+                c_edits_beamed, _ = metric(beamed_lines[j], target_lines[j])
                 
-                greedy_tokens = greedy_line.split(" ")
-                beamed_tokens = beamed_line.split(" ")
+                greedy_tokens = greedy_lines[j].split(" ")
+                beamed_tokens = beamed_lines[j].split(" ")
                 source_tokens = source_lines[j].split(" ")
                 target_tokens = target_lines[j].split(" ")
 
@@ -704,7 +745,9 @@ class Sequence2Sequence(object):
                 counts[5] += w_edits_ocr
                 counts[6] += w_edits_greedy
                 counts[7] += w_edits_beamed
-        
+                counts[8] += 1
+
+        self.logger.info('finished %d lines', counts[8])
         self.logger.info("CER OCR:    %.3f", counts[1] / counts[0])
         self.logger.info("CER greedy: %.3f", counts[2] / counts[0])
         self.logger.info("CER beamed: %.3f", counts[3] / counts[0])
@@ -768,7 +811,7 @@ class Sequence2Sequence(object):
                         # ensure the generator thread gets to see the same tf graph:
                         # with self.sess.as_default():
                         with self.graph.as_default():
-                            decoder_input_data_sampled = self.decode_batch_greedy(encoder_input_data)
+                            decoder_input_data_sampled, _ = self.decode_batch_greedy(encoder_input_data)
                             # overwrite scheduled lines with data sampled from decoder instead of GT:
                             decoder_input_data.resize( # zero-fill larger time-steps (in-place)
                                 decoder_input_data_sampled.shape)
@@ -820,8 +863,14 @@ class Sequence2Sequence(object):
                             continue
                         if with_confidence: # binary input with OCR confidence?
                             source_text, target_text = line # already includes end-of-sequence
-                            source_text, source_conf = map(list, zip(*source_text))
-                            source_text = ''.join(source_text)
+                            if not source_text: # empty
+                                source_text, source_conf = '', []
+                            elif type(source_text[0]) is tuple: # prob line
+                                source_text, source_conf = map(list, zip(*source_text))
+                                source_text = ''.join(source_text)
+                            else: # confmat
+                                source_conf = source_text
+                                source_text = ''.join(chunk[0][0] if chunk else '' for chunk in source_conf)
                             # start-of-sequence will be added by vectorisation
                             # end-of-sequence already preserved by pickle format
                         else:
@@ -870,34 +919,81 @@ class Sequence2Sequence(object):
                 break
     
     def vectorize_lines(self, encoder_input_sequences, decoder_input_sequences, encoder_conf_sequences=None):
+        '''Convert a batch of source and target sequences to arrays.
+        
+        Take the given (line) lists of encoder and decoder input strings,
+        `encoder_input_sequences` and `decoder_input_sequences`, map them
+        to indexes in the input dimension, and turn them into unit vectors,
+        padding each string to the longest line using zero vectors.
+        This gives numpy arrays of shape (batch_size, max_length, voc_size).
+        
+        When `encoder_conf_sequences` is also given, use floating point
+        probability values instead of integer ones. This can come in either
+        of two forms: simple lists of probabilities (of equal length as the
+        strings themselves), or full confusion networks, where every line
+        is a list of chunks, and each chunk is a list of alternatives, which
+        is a tuple of a string and its probability. (Chunks/alternatives may
+        have different length.)
+        
+        Special cases:
+        - true zero (no index): padding for encoder and decoder (masked),
+                                and start "symbol" for decoder input
+        - empty character (index zero): underspecified encoder input
+                                        (not allowed in decoder)
+        '''
         # Note: padding and confidence indexing need Dense/dot instead of Embedding/gather.
         # Used both for training (teacher forcing) and inference (ignore decoder input/output/weights).
-        # Special cases:
-        # - true zero (no index): padding for encoder and decoder (masked),
-        #                         start "symbol" for decoder input
-        # - empty character (index zero): underspecified encoder input, not allowed in decoder
         max_encoder_input_length = max(map(len, encoder_input_sequences))
         max_decoder_input_length = max(map(len, decoder_input_sequences))
-        encoder_input_data  = np.zeros((self.batch_size, max_encoder_input_length, self.voc_size),
+        assert len(encoder_input_sequences) == len(decoder_input_sequences)
+        batch_size = len(encoder_input_sequences)
+        with_confmat = False
+        if encoder_conf_sequences:
+            assert len(encoder_conf_sequences) == len(encoder_input_sequences)
+            if type(encoder_conf_sequences[0][0]) is list:
+                with_confmat = True
+                max_encoder_input_length = max(
+                    map(lambda sequence:
+                        sum(map(lambda chunk:
+                                max(map(lambda x: len(x[0]),
+                                        chunk)) if chunk else 0,
+                                sequence)),
+                        encoder_conf_sequences))
+                encoder_input_sequences = encoder_conf_sequences
+        encoder_input_data  = np.zeros((batch_size, max_encoder_input_length, self.voc_size),
                                        dtype=np.float32 if encoder_conf_sequences else np.uint32)
-        decoder_input_data  = np.zeros((self.batch_size, max_decoder_input_length+1, self.voc_size),
+        decoder_input_data  = np.zeros((batch_size, max_decoder_input_length+1, self.voc_size),
                                        dtype=np.uint32)
-        decoder_output_data = np.zeros((self.batch_size, max_decoder_input_length+1, self.voc_size),
+        decoder_output_data = np.zeros((batch_size, max_decoder_input_length+1, self.voc_size),
                                        dtype=np.uint32)
         for i, (enc_seq, dec_seq) in enumerate(zip(encoder_input_sequences, decoder_input_sequences)):
-            if i >= self.batch_size:
-                raise Exception('input sequences %d (%s\t%s) exceed batch size', i, enc_seq, dec_seq)
             j = 0 # to declare scope outside loop
-            for j, char in enumerate(enc_seq):
-                if char not in self.mapping[0]:
-                    self.logger.error('unmapped character "%s" at encoder input sequence %d', char, i)
-                    idx = 0 # underspecification
-                else:
-                    idx = self.mapping[0][char]
-                encoder_input_data[i, j, idx] = 1
-                if encoder_conf_sequences: # binary input with OCR confidence?
-                    encoder_input_data[i, j, idx] = encoder_conf_sequences[i][j]
-            # ...other j for encoder input: padding (keep zero)
+            if with_confmat:
+                for chunk in enc_seq:
+                    max_chars = max(map(lambda x: len(x[0]), chunk)) if chunk else 0
+                    for chars, conf in chunk:
+                        for k, char in enumerate(chars):
+                            if char not in self.mapping[0]:
+                                self.logger.error('unmapped character "%s" at input sequence %d position %d',
+                                                  char, i, j+k)
+                                idx = 0 # underspecification
+                            else:
+                                idx = self.mapping[0][char]
+                            encoder_input_data[i, j+k, idx] = conf
+                        # ...other k for input: padding (keep zero)
+                    j += max_chars
+                # ...other j for input: padding (keep zero)
+            else:
+                for j, char in enumerate(enc_seq):
+                    if char not in self.mapping[0]:
+                        self.logger.error('unmapped character "%s" at encoder input sequence %d', char, i)
+                        idx = 0 # underspecification
+                    else:
+                        idx = self.mapping[0][char]
+                    encoder_input_data[i, j, idx] = 1
+                    if encoder_conf_sequences: # binary input with OCR confidence?
+                        encoder_input_data[i, j, idx] = encoder_conf_sequences[i][j]
+                # ...other j for encoder input: padding (keep zero)
             # j == 0 for decoder input: start symbol (keep zero)
             for j, char in enumerate(dec_seq):
                 if char not in self.mapping[0]:
@@ -1011,7 +1107,7 @@ class Sequence2Sequence(object):
                 self._recompile() # necessary for trainable to take effect
             self._resync_decoder()
         self.status = 1
-
+        
     def decode_batch_greedy(self, encoder_input_data):
         '''Predict from one batch of lines array without alternatives.
         
@@ -1025,18 +1121,24 @@ class Sequence2Sequence(object):
         encoder_outputs = self.encoder_model.predict_on_batch(encoder_input_data)
         encoder_output_data = encoder_outputs[0]
         states_values = encoder_outputs[1:]
-        length = encoder_input_data.shape[1]
-        decoder_input_data = np.zeros((self.batch_size, 1, self.voc_size), dtype=np.uint32)
-        decoder_output_data = np.zeros((self.batch_size, length * 2, self.voc_size), dtype=np.uint32)
-        for i in range(length * 2):
+        batch_size = encoder_input_data.shape[0]
+        batch_length = encoder_input_data.shape[1]
+        decoder_input_data = np.zeros((batch_size, 1, self.voc_size), dtype=np.uint32)
+        decoder_output_data = np.zeros((batch_size, batch_length * 2, self.voc_size), dtype=np.uint32)
+        decoder_output_sequences = [''] * batch_size
+        for i in range(batch_length * 2):
             decoder_output_data[:, i] = decoder_input_data[:, -1]
             output = self.decoder_model.predict_on_batch([decoder_input_data, encoder_output_data] + states_values)
             output_scores = output[0]
             # sampling from the raw distribution: decoder_input_data = output_scores
             indexes = np.nanargmax(output_scores, axis=2)
             decoder_input_data = np.eye(self.voc_size, dtype=np.uint32)[indexes]
+            for j, idx in enumerate(indexes):
+                if decoder_output_sequences[j].endswith('\n'):
+                    continue
+                decoder_output_sequences[j] += self.mapping[1][int(idx)]
             states_values = list(output[1:])
-        return decoder_output_data
+        return decoder_output_data, decoder_output_sequences
     
     def decode_sequence_greedy(self, source_seq=None, encoder_outputs=None):
         '''Predict from one line vector without alternatives.
