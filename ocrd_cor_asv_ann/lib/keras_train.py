@@ -3,7 +3,7 @@
 copied from keras/engine/training_generator.py, with modifications:
  - auto-sized generators (no steps_per_epoch): generator must
    yield False at epoch end, then wrap around
- - use progbar with target=None ("Unknown") during first epoch, 
+ - use progbar with target=None ("Unknown") during first epoch,
    re-use target=steps afterwards
  - callbacks during evaluation (e.g. for fine-grained reset)
  - progbar also during validation
