@@ -1,9 +1,12 @@
-"""copied from keras/engine/training_generator.py, with modifications:
-   - auto-sized generators (no steps_per_epoch): generator must 
-     yield False at epoch end, then wrap around
-   - use progbar with target=None ("Unknown") during first epoch, re-use target=steps afterwards
-   - callbacks during evaluation (e.g. for fine-grained reset)
-   - progbar also during validation
+"""training/validation loops with autosized generators.
+
+copied from keras/engine/training_generator.py, with modifications:
+ - auto-sized generators (no steps_per_epoch): generator must
+   yield False at epoch end, then wrap around
+ - use progbar with target=None ("Unknown") during first epoch, 
+   re-use target=steps afterwards
+ - callbacks during evaluation (e.g. for fine-grained reset)
+ - progbar also during validation
 """
 
 from __future__ import absolute_import
@@ -178,7 +181,7 @@ def fit_generator_autosized(model,
                                      str(generator_output))
                 # build batch logs
                 batch_logs = {}
-                if x is None or len(x) == 0:
+                if not x:
                     # Handle data tensors support when no input given
                     # step-size = 1 for data tensors
                     batch_size = 1
@@ -386,7 +389,7 @@ def evaluate_generator_autosized(model, generator,
                                  str(generator_output))
             # build batch logs
             batch_logs = {}
-            if x is None or len(x) == 0:
+            if not x:
                 # Handle data tensors support when no input given
                 # step-size = 1 for data tensors
                 batch_size = 1
@@ -429,7 +432,7 @@ def evaluate_generator_autosized(model, generator,
             enqueuer.stop()
     
     averages = []
-    for i in range(len(outs)):
+    for i in range(len(model.metrics_names)):
         if i not in stateful_metric_indices:
             averages.append(np.average([out[i] for out in outs_per_batch],
                                        weights=batch_sizes))
@@ -438,5 +441,3 @@ def evaluate_generator_autosized(model, generator,
     if len(averages) == 1:
         return averages[0], steps_done
     return averages, steps_done
-
-

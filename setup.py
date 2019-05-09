@@ -1,0 +1,37 @@
+# -*- coding: utf-8 -*-
+"""
+Installs:
+    - cor-asv-ann-train
+"""
+import codecs
+
+from setuptools import setup, find_packages
+
+install_requires = open('requirements.txt').read().split('\n')
+
+with codecs.open('README.md', encoding='utf-8') as f:
+    README = f.read()
+
+setup(
+    name='ocrd_cor_asv_ann',
+    version='0.1.0',
+    description='sequence-to-sequence translator for noisy channel error correction',
+    long_description=README,
+    author='Robert Sachunsky',
+    author_email='sachunsky@informatik.uni-leipzig.de',
+    url='https://github.com/ASVLeipzig/cor-asv-ann',
+    license='Apache License 2.0',
+    packages=find_packages(exclude=('tests', 'docs')),
+    install_requires=install_requires,
+    package_data={
+        '': ['*.json', '*.yml', '*.yaml'],
+    },
+    entry_points={
+        'console_scripts': [
+            'cor-asv-ann-train=ocrd_cor_asv_ann.scripts.train:cli',
+            'cor-asv-ann-eval=ocrd_cor_asv_ann.scripts.eval:cli',
+            'cor-asv-ann-repl=ocrd_cor_asv_ann.scripts.repl:cli',
+            'ocrd-asv-ann-process=ocrd_cor_asv_ann.wrapper.cli:ocrd_asv_asv_ann',
+        ]
+    },
+)

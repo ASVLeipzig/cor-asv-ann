@@ -6,6 +6,7 @@ s2s.*.png
 s2s.*.csv
 *~
 __pycache__/
+*.egg-info/
 *.py[cod]
 env/
 env3/

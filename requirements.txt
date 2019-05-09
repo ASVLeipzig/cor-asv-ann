@@ -1,0 +1,8 @@
+ocrd >= 1.0.0b8
+click
+keras >= 2.2.4
+numpy
+tensorflow
+h5py
+networkx >= 2.0
+editdistance
