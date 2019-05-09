@@ -1,6 +1,5 @@
 import logging
 import signal
-import numpy as np
 from keras.callbacks import Callback
 
 class StopSignalCallback(Callback):

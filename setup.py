@@ -31,7 +31,7 @@ setup(
             'cor-asv-ann-train=ocrd_cor_asv_ann.scripts.train:cli',
             'cor-asv-ann-eval=ocrd_cor_asv_ann.scripts.eval:cli',
             'cor-asv-ann-repl=ocrd_cor_asv_ann.scripts.repl:cli',
-            'ocrd-asv-ann-process=ocrd_cor_asv_ann.wrapper.cli:ocrd_asv_asv_ann',
+            'ocrd-asv-ann-process=ocrd_cor_asv_ann.wrapper.cli:ocrd_cor_asv_ann',
         ]
     },
 )

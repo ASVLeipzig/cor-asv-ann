@@ -144,9 +144,8 @@ class Alignment(object):
         try:
             opcodes = self.matcher.get_opcodes()
         except Exception as err:
-            self.logger.error('alignment of "%s" and "%s" failed: \n%s',
-                              self.source_text, self.target_text,
-                              err.__traceback__)
+            self.logger.exception('alignment of "%s" and "%s" failed',
+                                  self.source_text, self.target_text)
             raise err
         for opcode, source_begin, source_end, target_begin, target_end in opcodes:
             if opcode == 'equal':

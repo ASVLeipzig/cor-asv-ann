@@ -1,0 +1,42 @@
+{
+  "git_url": "https://github.com/ASVLeipzig/cor-asv-ann",
+  "version": "0.1.0",
+  "tools": {
+    "ocrd-cor-asv-ann-process": {
+      "executable": "ocrd-cor-asv-ann-process",
+      "categories": [
+        "Text recognition and optimization"
+      ],
+      "steps": [
+        "recognition/post-correction"
+      ],
+      "description": "Improve text annotation by character-level encoder-attention-decoder ANN model",
+      "input_file_grp": [
+        "OCR-D-OCR-TESS",
+        "OCR-D-OCR-KRAK",
+        "OCR-D-OCR-OCRO",
+        "OCR-D-OCR-CALA",
+        "OCR-D-OCR-ANY"
+      ],
+      "output_file_grp": [
+        "OCR-D-COR-ASV"
+      ],
+      "parameters": {
+        "model_file": {
+          "type": "string",
+          "format": "uri",
+          "content-type": "application/x-hdf;subtype=bag",
+          "description": "path of h5py weight/config file for model trained with cor-asv-ann-train",
+          "required": true,
+          "cacheable": true
+        },
+        "textequiv_level": {
+          "type": "string",
+          "enum": ["line", "word", "glyph"],
+          "default": "glyph",
+          "description": "PAGE XML hierarchy level to read/write TextEquiv input/output on"
+        }
+      }
+    }
+  }
+}

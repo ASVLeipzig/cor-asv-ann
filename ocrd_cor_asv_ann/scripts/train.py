@@ -43,7 +43,8 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata
     """
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig()
+    logging.getLogger(__name__).setLevel(logging.DEBUG)
     
     s2s = Sequence2Sequence(logger=logging.getLogger(__name__), progbars=True)
     s2s.width = width

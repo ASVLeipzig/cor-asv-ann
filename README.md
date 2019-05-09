@@ -1,8 +1,11 @@
 # cor-asv-fst
-    OCR post-correction with attention encoder-decoder LSTMs
+    OCR post-correction with encoder-attention-decoder LSTMs
 
 ## Introduction
 
+This is a tool for automatic OCR _post-correction_ (reducing optical character recognition errors) with recurrent neural networks. 
+
+...
 
 ## Installation
 
@@ -26,7 +29,7 @@ pip install -e .
 
 ## Usage
 
-This packages has two user interfaces:
+This packages has the following user interfaces:
 
 ### command line interface `cor-asv-ann-train`
 
@@ -40,6 +43,12 @@ To be used with string arguments and plain-text files.
 
 ...
 
+### command line interface `cor-asv-ann-repl`
+
+interactive
+
+...
+
 ### [OCR-D processor](https://github.com/OCR-D/core) interface `ocrd-cor-asv-ann-process`
 
 To be used with [PageXML](https://www.primaresearch.org/tools/PAGELibraries) documents in an [OCR-D](https://github.com/OCR-D/spec/) annotation workflow. Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
@@ -48,15 +57,15 @@ To be used with [PageXML](https://www.primaresearch.org/tools/PAGELibraries) doc
 
 ```json
   "tools": {
-    "cor-asv-ann-process": {
-      "executable": "cor-asv-ann-process",
+    "ocrd-cor-asv-ann-process": {
+      "executable": "ocrd-cor-asv-ann-process",
       "categories": [
         "Text recognition and optimization"
       ],
       "steps": [
         "recognition/post-correction"
       ],
-      "description": "Improve text annotation by character-level attention-based encoder-decoder LSTM neural model",
+      "description": "Improve text annotation by character-level encoder-attention-decoder ANN model",
       "input_file_grp": [
         "OCR-D-OCR-TESS",
         "OCR-D-OCR-KRAK",
@@ -72,21 +81,15 @@ To be used with [PageXML](https://www.primaresearch.org/tools/PAGELibraries) doc
           "type": "string",
           "format": "uri",
           "content-type": "application/x-hdf;subtype=bag",
-          "description": "path of h5py weight/config file for model from cor-asv-ann-train",
+          "description": "path of h5py weight/config file for model trained with cor-asv-ann-train",
           "required": true,
           "cacheable": true
         },
         "textequiv_level": {
           "type": "string",
-          "enum": ["word", "glyph"],
+          "enum": ["line", "word", "glyph"],
           "default": "glyph",
-          "description": "PAGE XML hierarchy level to read TextEquiv input on (output will always be word level)"
-        },
-        "beam_width": {
-          "type": "number",
-          "format": "integer",
-          "description": "maximum number of best partial paths to consider during beam search in language modelling",
-          "default": 100
+          "description": "PAGE XML hierarchy level to read/write TextEquiv input/output on"
         }
       }
     }
