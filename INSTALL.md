@@ -1,49 +1,79 @@
 ### installing CUDA, cuDNN, Tensorflow with cuDNN support:
 
+(as per [CUDA installation instructions](https://developer.nvidia.com/cuda-downloads):)
+
+Download and install CUDA driver and toolkit:
+
 ```sh
-sudo add-apt-repository ppa:graphics-drivers/ppa
+sudo dpkg -i cuda-repo-ubuntu1804-10-1-local-10.1.168-418.67_1.0-1_amd64.deb
+sudo apt-key add /var/cuda-repo-*/7fa2af80.pub
 sudo apt-get update
-sudo apt-get install nvidia-driver nvidia-cuda-toolkit libcupti-dev
-git clone https://github.com/NVIDIA/cuda-samples.git && cd cuda-samples
+sudo apt-get install cuda
+export PATH=/usr/local/cuda-10.1/bin:/usr/local/cuda-10.1/NsightCompute-2019.1${PATH:+:${PATH}}
+cuda-install-samples-10.1.sh cuda-samples/ && cd cuda-samples && make
 ```
 
-nvcc does not work with v(gcc) > 5, and deb installation path has standard prefix:
+However, beware that this method installs CUDA toolkit into `/usr/local/cuda`, while the other Nvidia repos use `/usr`, which does not work when building Tensorflow (see below)!
+
+Next, install [NCCL](https://developer.nvidia.com/nccl/nccl-download):
+
 ```sh
-sudo apt-get install gcc-5 g++-5
-make CUDA_PATH=/usr HOST_COMPILER=g++-5 EXTRA_NVCCFLAGS="-L /usr/lib/x86_64-linux-gnu"
-./bin/x86_64/linux/release/deviceQuery
+sudo dpkg -i nccl-repo-ubuntu1804-2.4.7-ga-cuda10.1_1-1_amd64.deb
+sudo apt install libnccl2=2.4.7-1+cuda10.1 libnccl-dev=2.4.7-1+cuda10.1
+# compensate for NCCL in /usr instead of /usr/local/cuda (like CUDA toolkit):
+sudo tar --strip-components=1 -C /usr/local/cuda/targets/x86_64-linux/ -xvf nccl_2.4.7-1+cuda10.1_x86_64.txz
 ```
 
-Then follow [cuDNN installation guide](https://docs.nvidia.com/deeplearning/sdk/cudnn-install/index.html#installcuda).
-Caveat: Ubuntu 18.04 is still not supported, but we can use the 16.04 deb files `libcudnn7{,-dev,-doc}`,
-so register as Nvidia developer, [download cuDNN](https://developer.nvidia.com/rdp/cudnn-download).
+Then follow [cuDNN installation guide](https://docs.nvidia.com/deeplearning/sdk/cudnn-install/index.html#installcuda)
+to install `libcudnn7{,-dev,-doc}`, so register as Nvidia developer, [download cuDNN](https://developer.nvidia.com/rdp/cudnn-download).
 
 Note: cuDNN depends on specific CUDA toolkit versions (without explicit dependency)!
 ```sh
-sudo dpkg -i libcudnn7-dev_7.1.4.18-1+cuda9.0_amd64.deb
-sudo dpkg -i libcudnn7-dev-dev_7.1.4.18-1+cuda9.0_amd64.deb
-sudo dpkg -i libcudnn7-doc-dev_7.1.4.18-1+cuda9.0_amd64.deb
-cp -r /usr/src/cudnn_samples_v7/mnistCUDNN/ . && cd mnistCUDNN
-make CUDA_PATH=/usr HOST_COMPILER=g++-5 EXTRA_NVCCFLAGS="-L /usr/lib/x86_64-linux-gnu"
+sudo dpkg -i libcudnn7_7.6.0.64-1+cuda10.1_amd64.deb
+sudo dpkg -i libcudnn7-dev_7.6.0.64-1+cuda10.1_amd64.deb
+sudo dpkg -i libcudnn7-doc_7.6.0.64-1+cuda10.1_amd64.deb
+cp -r /usr/src/cudnn_samples_v7 . && cd cudnn_samples_v7/mnistCUDNN
+make clean && make
 ./mnistCUDNN
+# compensate for cuDNN in /usr instead of /usr/local/cuda (like CUDA toolkit):
+sudo tar -C /usr/local/ -zxvf cudnn-10.1-linux-x64-v7.6.0.64.tgz
 ```
 
 Next, install Tensorflow-GPU according to [build instructions for CUDA](https://www.tensorflow.org/install/install_sources),
 but ignoring statements about `LD_LIBRARY_PATH` etc.:
 ```sh
-...
-cd tensorflow; git checkout r1.8 # or whatever
+# virtualenv...
+# python requirements:
+pip install -U pip six numpy wheel setuptools mock
+pip install -U keras_applications==1.0.6 --no-deps
+pip install -U keras_preprocessing==1.0.5 --no-deps
+pip install -U protobuf # not mentioned in build instructions, only Python 2
+pip install -U enum34 # not mentioned in build instructions, only Python 2
+cd tensorflow; git checkout r1.13 # or whatever
 ./configure
 ```
 
 This must be done both for `/usr/bin/python` (if required) and `/usr/bin/python3`:
-- for CUDA, enter `y`, version `9.1` and path `/usr` (will be guessed wrongly)
-- for cuDNN 7 likewise, version `7.1` and path `/usr`
-- Compute-capability `6.1` for _Quadro P1000_ according to https://developer.nvidia.com/cuda-gpus (will be guessed wrongly, too)
-- for C compiler `/usr/bin/x86_64-linux-gnu-gcc-5` (will be guessed wrongly), 
-  since `>5` does not work (but even `>5.4` does not work, see below)
-- to get `/usr` working at all, `third_party/gpus/cuda_configure.bzl` must be patched!
-- moreoever, there seems to be a [bug in GCC 5.5](https://github.com/tensorflow/tensorflow/issues/10220#issuecomment-352110064) (with intrinsic functions for AVX512 instruction set). With that workaround the following build does run through:
+- for CUDA, enter `y`, version `10.1` (guessed wrongly) and path `/usr/local/cuda`
+- for cuDNN 7 likewise, version `7.6.0` and path `/usr/local/cuda`
+- for NCCL, enter version `2.4.7`
+- Compute-capability `6.1` for _Quadro P1000_ according to https://developer.nvidia.com/cuda-gpus
+- for C compiler, keep default `/usr/bin/gcc`
+- to get `/usr/local/cuda` prefix from CUDA Toolkit repo for Ubuntu mixed with `/usr` prefix from cuDNN repo for Ubuntu working at all with Tensorflow build, the following symlinks have to be created:
+```sh
+# compensate for missing symlinks for minor version:
+for file in /usr/local/cuda/lib64/*.so.10; do sudo ln -rs $file ${file}.1; done
+# compensate for libcublas in /usr instead of /usr/local/cuda (like CUDA toolkit):
+sudo ln -s $(dpkg-query -L libcublas-dev | fgrep /include) /usr/local/cuda/include
+sudo ln -s $(dpkg-query -L libcublas10 | fgrep .so.) /usr/local/cuda/lib64
+# same for NCCL (if not using the tgz above):
+sudo ln -s $(dpkg-query -L libnccl-dev | fgrep /include) /usr/local/cuda/include
+sudo ln -s $(dpkg-query -L libnccl2 | fgrep .so.) /usr/local/cuda/lib64
+# same for cuDNN (if not using the tgz above):
+sudo ln -s $(dpkg-query -L libcudnn7 | fgrep .so.) /usr/local/cuda/lib64
+```
+
+With these workarounds the following build does run through:
 ```sh
 bazel build --config=opt --config=cuda //tensorflow/tools/pip_package:build_pip_package
 bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg
