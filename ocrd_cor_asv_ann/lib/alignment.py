@@ -186,20 +186,63 @@ class Alignment(object):
         dist = editdistance.eval(source_text, target_text)
         return dist, max(len(source_text), len(target_text))
     
-    def get_adjusted_distance(self, source_text, target_text):
-        self.set_seqs(source_text, target_text)
+    def get_adjusted_distance(self, source_text, target_text, normalization=None):
+        import unicodedata
+        def normalize(seq):
+            if normalization in ['NFC', 'NFKC']:
+                if isinstance(seq, list):
+                    return [unicodedata.normalize(normalization, tok) for tok in seq]
+                else:
+                    return unicodedata.normalize(normalization, seq)
+            else:
+                return seq
+        self.set_seqs(normalize(source_text), normalize(target_text))
         alignment = self.get_best_alignment()
         dist = 0 # distance
         
-        umlauts = {u"ä": "a", u"ö": "o", u"ü": "u"} # for example
+        umlauts = {u"ä": "a", u"ö": "o", u"ü": "u"} # for combination with U+0363 (not in NFKC)
         #umlauts = {}
+        if normalization == 'historic_latin':
+            equivalences = [
+                # some of these are not even in NFKC:
+                {"s", "ſ"},
+                {"r", "ꝛ"},
+                {"0", "⁰"},
+                {"1", "¹"},
+                {"2", "²"},
+                {"3", "³"},
+                {"4", "⁴"},
+                {"5", "⁵"},
+                {"6", "⁶"},
+                {"7", "⁷"},
+                {"8", "⁸"},
+                {"9", "⁹", "ꝰ"},
+                {"„", "»", "›", "〟"},
+                {"“", "«", "‹", "〞"},
+                {"'", "ʹ", "ʼ", "′", "‘", "’", "‛", "᾽"},
+                {",", "‚"},
+                {"-", "−", "—", "‐", "‑", "‒", "–", "⁃", "﹘", "―", "─"},
+                {"‟", "〃", "”", "″"}, # ditto signs
+                {"~", "∼", "˜", "῀", "⁓"},
+                {"(", "⟨", "⁽"},
+                {")", "⟩", "⁾"},
+                {"/", "⧸", "⁄", "∕"},
+                {"\\", "⧹", "∖", "⧵"}
+            ]
+        else:
+            equivalences = []
+        def equivalent(x, y):
+            for equivalence in equivalences:
+                if x in equivalence and y in equivalence:
+                    return True
+            return False
         
         source_umlaut = ''
         target_umlaut = ''
         for source_sym, target_sym in alignment:
             #print(source_sym, target_sym)
             
-            if source_sym == target_sym:
+            if source_sym == target_sym or equivalent(source_sym, target_sym):
                 if source_umlaut: # previous source is umlaut non-error
                     source_umlaut = False # reset
                     dist += 1.0 # one full error (mismatch)
