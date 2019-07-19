@@ -732,8 +732,10 @@ class Sequence2Sequence(object):
             encoder_outputs = self.encoder_model.predict_on_batch(encoder_input_data)
             # decode lines and characters individually:
             output_lines, output_probs, output_scores, alignments = [], [], [], []
-            for j in range(len(lines)):
-                if greedy:
+            for j, input_line in enumerate(lines):
+                if not input_line:
+                    line, probs, score, alignment = '', [], 0, []
+                elif greedy:
                     line, probs, score, alignment = self.decode_sequence_greedy(
                         encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs])
                 else:
