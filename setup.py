@@ -2,6 +2,10 @@
 """
 Installs:
     - cor-asv-ann-train
+    - cor-asv-ann-eval
+    - cor-asv-ann-repl
+    - ocrd-cor-asv-ann-process
+    - ocrd-cor-asv-ann-evaluate
 """
 import codecs
 
@@ -14,7 +18,7 @@ with codecs.open('README.md', encoding='utf-8') as f:
 
 setup(
     name='ocrd_cor_asv_ann',
-    version='0.1.0',
+    version='0.1.1',
     description='sequence-to-sequence translator for noisy channel error correction',
     long_description=README,
     author='Robert Sachunsky',
@@ -31,7 +35,8 @@ setup(
             'cor-asv-ann-train=ocrd_cor_asv_ann.scripts.train:cli',
             'cor-asv-ann-eval=ocrd_cor_asv_ann.scripts.eval:cli',
             'cor-asv-ann-repl=ocrd_cor_asv_ann.scripts.repl:cli',
-            'ocrd-asv-ann-process=ocrd_cor_asv_ann.wrapper.cli:ocrd_cor_asv_ann',
+            'ocrd-cor-asv-ann-process=ocrd_cor_asv_ann.wrapper.cli:ocrd_cor_asv_ann_process',
+            'ocrd-cor-asv-ann-evaluate=ocrd_cor_asv_ann.wrapper.cli:ocrd_cor_asv_ann_evaluate',
         ]
     },
 )

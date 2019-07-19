@@ -37,6 +37,24 @@
           "description": "PAGE XML hierarchy level to read/write TextEquiv input/output on"
         }
       }
+    },
+    "ocrd-cor-asv-ann-evaluate": {
+      "executable": "ocrd-cor-asv-ann-evaluate",
+      "categories": [
+        "Text recognition and optimization"
+      ],
+      "steps": [
+        "recognition/evaluation"
+      ],
+      "description": "Align different textline annotations and compute distance",
+      "parameters": {
+        "metric": {
+          "type": "string",
+          "enum": ["Levenshtein", "combining-e-umlauts", "NFC", "NFKC", "historic_latin"],
+          "default": "Levenshtein",
+          "description": "Distance metric to calculate and aggregate"
+        }
+      }
     }
   }
 }
