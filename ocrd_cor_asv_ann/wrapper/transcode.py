@@ -251,7 +251,8 @@ def _line_sequences2string_sequences(mapping, line_sequences):
                 textequiv.Unicode = GAP
                 j = 1
             input_lines[-1] += textequiv.Unicode
-            conf[-1].extend([textequiv.conf or 1.] * j)
+            # generateDS does not convert simpleType for attributes (yet?)
+            conf[-1].extend([float(textequiv.conf or "1.0")] * j)
             i += j
     return input_lines, conf, textequiv_starts, word_starts, textline_starts
 
