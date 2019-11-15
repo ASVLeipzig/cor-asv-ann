@@ -197,7 +197,10 @@ class Sequence2Sequence(object):
         
         if batch_size:
             self.batch_size = batch_size
-        
+
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        K.set_session(tf.Session(config=config))
         # self.sess = tf.Session()
         # K.set_session(self.sess)
         
@@ -462,7 +465,7 @@ class Sequence2Sequence(object):
         # self.encoder_model._make_predict_function()
         # self.decoder_model._make_predict_function()
         # self.sess.run(tf.global_variables_initializer())
-        self.graph = tf.get_default_graph()
+        self.graph = tf.compat.v1.get_default_graph()
         self.status = 1
     
     def _recompile(self):
