@@ -150,14 +150,20 @@ class Sequence2Sequence(object):
         # rate of dropped output connections in encoder and decoder HL?
         self.dropout = 0.2
         
-        ### inference parameters
-        # up to how many new candidates can enter the beam in decode_sequence_beam?
-        self.beam_width_in = 4
-        # how much worse than the best probability
-        # may new candidates be to enter the beam in decode_sequence_beam?
+        ### beam decoder inference parameters
+        # probability of the input character candidate in each hypothesis
+        # (unless already misaligned); helps balance precision/recall trade-off
+        self.rejection_threshold = 0.5
+        # scale factor of extra cost for deviation from monotonically growing
+        # input-output character alignments
+        self.misalignment_penalty = 3
+        # up to how many new candidates can enter the beam per context/node?
+        self.beam_width_in = 32
+        # how much worse relative to the probability of the best candidate
+        # may new candidates be to enter the beam?
         self.beam_threshold_in = 0.5
-        # up to how many results can be drawn from generator decode_sequence_beam?
-        self.beam_width_out = 32
+        # up to how many results can be drawn from result generator?
+        self.beam_width_out = 16
 
         ### runtime variables
         self.logger = logger or logging.getLogger(__name__)
@@ -1288,29 +1294,16 @@ class Sequence2Sequence(object):
             encoder_outputs = self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
         attended_seq = encoder_outputs[0] # constant
         states_values = encoder_outputs[1:]
-        
-        next_beam = []
+
+        # Start with an empty beam (no input, only state):
+        next_beam = [Node(state=states_values,
+                          value='', cost=0.0,
+                          extras=(attended_seq.shape[1], [], []))]
         final_beam = []
-        # keep track of source_seq (rejection) beside the beam so it cannot fall off:
-        rej_node = Node(state=states_values,
-                        value='', cost=0.0,
-                        extras=(len(attended_seq), [], []))
-        # generator will raise StopIteration if no hypotheses after loop
-        max_batches = attended_seq.shape[1] * 2 # how many batches (i.e. char hypotheses) will be processed per line?
+        # how many batches (i.e. char hypotheses) will be processed per line at maximum?
+        max_batches = attended_seq.shape[1] * 4 # (usually) safe limit
         for l in range(max_batches):
             beam = []
-            if rej_node:
-                if rej_node.value == '\n': # end-of-sequence symbol?
-                    # add fallback as possible solution
-                    insort_left(final_beam, rej_node)
-                    # self.logger.debug('%02d found rej solution %.2f/"%s"',
-                    #                   l, rej_node.pro_cost(), ''.join(rej_node.to_sequence_of_values()).strip('\n'))
-                    rej_node = None
-                else:
-                    # add fallback as additional hypothesis (regardless of position in beam)
-                    beam.append(rej_node)
-                    # self.logger.debug('%02d rej hypothesis %.2f/"%s"',
-                    #                   l, rej_node.pro_cost(), ''.join(rej_node.to_sequence_of_values()).strip('\n'))
             while next_beam:
                 node = next_beam.pop()
                 if node.value == '\n': # end-of-sequence symbol?
@@ -1324,8 +1317,9 @@ class Sequence2Sequence(object):
                 if len(beam) >= self.batch_size:
                     break # enough for one batch
             if not beam:
-                break # will give StopIteration unless we have some results already
-            if len(final_beam) > self.beam_width_out:
+                break # will yield StopIteration unless we have some results already
+            if (len(final_beam) > self.beam_width_out and
+                final_beam[-1].pro_cost() > beam[0].pro_cost()):
                 break # it is unlikely that later iterations will find better top n results
             
             # use fringe leaves as minibatch, but with only 1 timestep
@@ -1339,7 +1333,7 @@ class Sequence2Sequence(object):
                           for layer in range(len(beam[0].state))] # stack layers across batch
             output = self.decoder_model.predict_on_batch([target_seq, attended_seq] + states_val)
             scores_output = output[0][:, -1] # only last timestep
-            alignment = output[1][:, -1]
+            alignments = output[1][:, -1]
             states_output = list(output[2:]) # from (layers) tuple
             for i, node in enumerate(beam): # iterate over batch (1st dim)
                 # unstack layers for current sample:
@@ -1347,52 +1341,89 @@ class Sequence2Sequence(object):
                 scores = scores_output[i]
                 scores_order = np.argsort(scores) # still in reverse order (worst first)
                 logscores = -np.log(scores[scores_order])
+                #
+                # estimate current alignment:
+                source_len = node.extras[0]
+                alignment = alignments[i]
+                #source_pos = np.argmax(alignment)
+                source_pos = int(np.matmul(alignment, np.arange(source_len)).round()) # more robust
+                if node.length > 1:
+                    prev_alignment = node.extras[2][-1]
+                    #prev_source_pos = np.argmax(prev_alignment)
+                    prev_source_pos = int(np.matmul(prev_alignment, np.arange(source_len)).round()) # more robust
+                else:
+                    prev_source_pos = -1
+                # self.logger.debug('%s: pos=%d prev_pos=%d',
+                #                   ''.join(node.to_sequence_of_values()),
+                #                   source_pos, prev_source_pos)
+                source_scores = source_seq[source_pos]
+                #
+                # penalize any deviation from linear 1:1 alignment:
+                #alignment_target = node.length - 1 # cumulative
+                alignment_target = prev_source_pos + 1 # differential
+                alignment_score = self.misalignment_penalty * \
+                                  np.matmul(alignment,
+                                            np.abs(alignment_target - np.arange(source_len)))
+                #
                 # add fallback/rejection candidates regardless of beam threshold:
-                #source_pos = np.argmax(alignment[i])
-                rej_idx = -1
-                if node is rej_node:
-                    # follow up on input string (as rejection candidate)
-                    source_scores = source_seq[node.length - 1]
-                    if np.any(source_scores):
-                        rej_idx = np.nanargmax(source_scores)
-                        rej_node = Node(parent=node, state=states,
-                                        value=self.mapping[1][rej_idx],
-                                        cost=-np.log(scores[rej_idx]),
-                                        extras=(node.extras[0],
-                                                node.extras[1] + [scores[rej_idx]],
-                                                node.extras[2] + [alignment[i]]))
-                    else:
-                        # we slipped into padding without seeing end-of-sequence (newline)
-                        rej_node = None # give up
-                    #continue # prevent rejection right-branching
+                if (prev_source_pos < source_pos and # not twice on the same input
+                    np.any(source_scores)):
+                    rej_idx = np.nanargmax(source_scores)
+                else:
+                    rej_idx = None
+                # 
                 # determine beam width from beam threshold to add normal candidates:
                 highest = scores[scores_order[-1]]
-                beampos = self.voc_size - np.searchsorted(scores[scores_order], # variable beam width
-                                                          highest * self.beam_threshold_in)
+                beampos = self.voc_size - np.searchsorted(
+                    scores[scores_order],
+                    #highest - self.beam_threshold_in) # variable beam width (absolute)
+                    highest * self.beam_threshold_in) # variable beam width (relative)
                 #beampos = self.beam_width_in # fixed beam width
+                beampos = min(beampos, self.beam_width_in) # mixed beam width
                 pos = 0
+                #
                 # follow up on best predictions, in true order (best first):
                 for idx, logscore in zip(reversed(scores_order), reversed(logscores)):
                     pos += 1
-                    if pos > beampos or pos > self.beam_width_in:
-                        break # ignore further alternatives
                     if idx == rej_idx:
-                        continue # no duplicates when left- or right-branching
+                        # use a fixed minimum probability
+                        if self.rejection_threshold:
+                            # self.logger.debug('adding rejection candidate "%s" [%.2f]',
+                            #                   self.mapping[1][rej_idx], logscore)
+                            logscore = min(logscore, -np.log(self.rejection_threshold))
+                            alignment = np.eye(source_len)[source_pos]
+                        rej_idx = None
+                    elif pos > beampos:
+                        if rej_idx: # not yet in beam
+                            continue # search for rejection candidate
+                        else:
+                            break # ignore further alternatives
+                    #
+                    # decode into string:
                     value = self.mapping[1][idx]
                     if (np.isnan(logscore) or
                         value == ''): # underspecification
                         continue # ignore this alternative
+                    #
+                    # add new hypothesis to the beam:
                     new_node = Node(parent=node, state=states,
-                                    value=value, cost=logscore,
+                                    value=value, cost=logscore + alignment_score,
                                     extras=(node.extras[0],
                                             node.extras[1] + [np.exp(-logscore)],
-                                            node.extras[2] + [alignment[i]]))
+                                            node.extras[2] + [alignment]))
+                    # self.logger.debug('"%s" pro_cost: %.3f, cum_cost: %.1f, penalty: %.1f',
+                    #                   ''.join(new_node.to_sequence_of_values()),
+                    #                   new_node.pro_cost(),
+                    #                   new_node.cum_cost, alignment_score)
                     insort_left(next_beam, new_node)
+            # sanitize overall beam size:
             if len(next_beam) > max_batches * self.batch_size: # more than can ever be processed within limits?
                 next_beam = next_beam[-max_batches*self.batch_size:] # to save memory, keep only best
+        # after max_batches, we still have active hypotheses but to few inactive?
         if next_beam and len(final_beam) < self.beam_width_out:
-            self.logger.warning('max_batches %d is not enough for beam_width_out %d: got only %d, still %d left',
-                                max_batches, self.beam_width_out, len(final_beam), len(next_beam))
+            self.logger.warning('max_batches %d is not enough for beam_width_out %d: got only %d, still %d left for: "%s"',
+                                max_batches, self.beam_width_out, len(final_beam), len(next_beam),
+                                ''.join(self.mapping[1][np.nanargmax(step)] for step in source_seq))
         while final_beam:
             node = final_beam.pop()
             yield (''.join(node.to_sequence_of_values()),
@@ -1428,9 +1459,10 @@ class Node(object):
     # for sort order, use cumulative costs relative to length
     # (in order to get a fair comparison across different lengths,
     #  and hence, breadth-first search), and use inverse order
-    # (so the faster pop() can be used)
+    # (so the faster bisect() and pop() can be used)
     def pro_cost(self):
-        return - (self.cum_cost + 0.5 * math.fabs(self.length - self.extras[0])) / self.length
+        #return - (self.cum_cost + 0.5 * math.fabs(self.length - self.extras[0])) / self.length
+        return - (self.cum_cost + self.cum_cost/self.length * max(0, self.extras[0] - self.length)) / self.length
     
     def __lt__(self, other):
         return self.pro_cost() < other.pro_cost()

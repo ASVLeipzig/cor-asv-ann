@@ -12,8 +12,10 @@ from ..lib.seq2seq import Sequence2Sequence
 # we have to deal with pickle dumps (mode 'rb', includes confidence)
 # or plain text files (mode 'r')
 @click.option('--fast', is_flag=True, help='only decode greedily')
+@click.option('--rejection', default=0.5, type=click.FloatRange(0,1.0),
+              help='probability of the input characters in all hypotheses (set 0 to use raw predictions)')
 @click.argument('data', nargs=-1, type=click.Path(dir_okay=False, exists=True))
-def cli(load_model, fast, data):
+def cli(load_model, fast, rejection, data):
     """Evaluate a correction model.
     
     Load a sequence-to-sequence model from the given path.
@@ -31,5 +33,6 @@ def cli(load_model, fast, data):
     s2s.load_config(load_model)
     s2s.configure()
     s2s.load_weights(load_model)
+    s2s.rejection_threshold = rejection
     
     s2s.evaluate(data, fast)
