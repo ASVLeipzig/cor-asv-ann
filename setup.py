@@ -18,7 +18,7 @@ with codecs.open('README.md', encoding='utf-8') as f:
 
 setup(
     name='ocrd_cor_asv_ann',
-    version='0.1.1',
+    version='0.1.2',
     description='sequence-to-sequence translator for noisy channel error correction',
     long_description=README,
     author='Robert Sachunsky',
