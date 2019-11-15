@@ -636,8 +636,12 @@ class Sequence2Sequence(object):
         If `fast`, then skip beam search for single lines, and process all batches
         in parallel greedily.
         '''
+        # FIXME: stop using both greedy and beamed in 1 function
         assert self.status == 2
         counts = [1e-9, 0, 0, 0, 1e-9, 0, 0, 0, 0., 0., 0]
+        c_ocr_aligner, w_ocr_aligner = Alignment(0, confusion=True), Alignment(0)
+        c_greedy_aligner, w_greedy_aligner = Alignment(0, confusion=True), Alignment(0)
+        c_beamed_aligner, w_beamed_aligner = Alignment(0, confusion=True), Alignment(0)
         for batch_no, batch in enumerate(self.gen_lines(filenames, False)):
             source_lines, target_lines, sourceconf_lines = batch
             #bar.update(1)
@@ -665,21 +669,20 @@ class Sequence2Sequence(object):
                 self.logger.info('Target prediction (beamed): %s [%.2f]',
                                  beamed_lines[j].rstrip(u'\n'), beamed_scores[j])
                 
-                #metric = self.aligner.get_levenshtein_distance
-                metric = self.aligner.get_adjusted_distance
+                #metric = get_levenshtein_distance
                 
-                c_edits_ocr, c_total = metric(source_lines[j], target_lines[j])
-                c_edits_greedy, _ = metric(greedy_lines[j], target_lines[j])
-                c_edits_beamed, _ = metric(beamed_lines[j], target_lines[j])
+                c_edits_ocr, c_total = c_ocr_aligner.get_adjusted_distance(source_lines[j], target_lines[j])
+                c_edits_greedy, _ = c_greedy_aligner.get_adjusted_distance(greedy_lines[j], target_lines[j])
+                c_edits_beamed, _ = c_beamed_aligner.get_adjusted_distance(beamed_lines[j], target_lines[j])
                 
                 greedy_tokens = greedy_lines[j].split(" ")
                 beamed_tokens = beamed_lines[j].split(" ")
                 source_tokens = source_lines[j].split(" ")
                 target_tokens = target_lines[j].split(" ")
 
-                w_edits_ocr, w_total = metric(source_tokens, target_tokens)
-                w_edits_greedy, _ = metric(greedy_tokens, target_tokens)
-                w_edits_beamed, _ = metric(beamed_tokens, target_tokens)
+                w_edits_ocr, w_total = w_ocr_aligner.get_adjusted_distance(source_tokens, target_tokens)
+                w_edits_greedy, _ = w_greedy_aligner.get_adjusted_distance(greedy_tokens, target_tokens)
+                w_edits_beamed, _ = w_beamed_aligner.get_adjusted_distance(beamed_tokens, target_tokens)
                 
                 counts[0] += c_total
                 counts[1] += c_edits_ocr
@@ -689,11 +692,15 @@ class Sequence2Sequence(object):
                 counts[5] += w_edits_ocr
                 counts[6] += w_edits_greedy
                 counts[7] += w_edits_beamed
-                counts[8] += sum(greedy_scores)
-                counts[9] += sum(beamed_scores)
-                counts[10] += len(greedy_lines)
+                
+            counts[8] += sum(greedy_scores)
+            counts[9] += sum(beamed_scores)
+            counts[10] += len(greedy_lines)
 
         self.logger.info('finished %d lines', counts[10])
+        self.logger.info('OCR confusion: %s', c_ocr_aligner.get_confusion(10))
+        self.logger.info('greedy confusion: %s', c_greedy_aligner.get_confusion(10))
+        self.logger.info('beamed confusion: %s', c_beamed_aligner.get_confusion(10))
         self.logger.info('ppl greedy: %.3f', math.exp(counts[8]/counts[10]))
         self.logger.info('ppl beamed: %.3f', math.exp(counts[9]/counts[10]))
         self.logger.info("CER OCR:    %.3f", counts[1] / counts[0])
@@ -740,9 +747,16 @@ class Sequence2Sequence(object):
                         encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs])
                 else:
                     # query only 1-best
-                    line, probs, score, alignment = next(self.decode_sequence_beam(
-                        source_seq=encoder_input_data[j], # needed for rejection fallback
-                        encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs]))
+                    try:
+                        line, probs, score, alignment = next(self.decode_sequence_beam(
+                            source_seq=encoder_input_data[j], # needed for rejection fallback
+                            encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs]))
+                    except StopIteration:
+                        self.logger.error('cannot beam-decode input line %d: "%s"', j, input_line)
+                        line = input_line
+                        probs = [1.0] * len(line)
+                        score = 0
+                        alignment = np.eye(len(line)).tolist()
                 output_lines.append(line)
                 output_probs.append(probs)
                 output_scores.append(score)

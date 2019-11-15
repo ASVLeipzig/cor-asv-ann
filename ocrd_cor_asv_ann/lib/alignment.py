@@ -1,8 +1,11 @@
 # -*- coding: utf-8
 import logging
+import bisect
+import unicodedata
 
 class Alignment(object):
-    def __init__(self, gap_element=0, logger=None):
+    def __init__(self, gap_element=0, logger=None, confusion=False):
+        self.confusion = dict() if confusion else None
         self.gap_element = gap_element
         self.logger = logger or logging.getLogger(__name__)
         # alignment for windowing...
@@ -178,8 +181,48 @@ class Alignment(object):
         assert target_end == len(self.target_text), \
             'alignment does not span full sequence "%s" - %d' % (self.target_text, target_end)
 
+        if not self.confusion is None:
+            for pair in alignment1:
+                if pair[0] == pair[1]:
+                    continue
+                count = self.confusion.setdefault(pair, 0)
+                self.confusion[pair] = count + 1
+        
         return alignment1
-    
+
+    def get_confusion(self, limit=None):
+        if self.confusion is None:
+            raise Exception("aligner was not configured to count confusion")
+        table = []
+        class Confusion(object):
+            def __init__(self, count, pair):
+                self.count = count
+                self.pair = pair
+            def __repr__(self):
+                return str((self.count, self.pair))
+            def __lt__(self, other):
+                return self.count > other.count
+            def __le__(self, other):
+                return self.count >= other.count
+            def __eq__(self, other):
+                return self.count == other.count
+            def __ne__(self, other):
+                return self.count != other.count
+            def __gt__(self, other):
+                return self.count < other.count
+            def __ge__(self, other):
+                return self.count <= other.count
+        for pair, count in self.confusion.items():
+            conf = Confusion(count, pair)
+            length = len(table)
+            idx = bisect.bisect_left(table, conf, hi=min(limit or length, length))
+            if limit and idx >= limit:
+                continue
+            table.insert(idx, conf)
+        if limit:
+            table = table[:limit]
+        return table
+        
     def get_levenshtein_distance(self, source_text, target_text):
         # alignment for evaluation only...
         import editdistance
@@ -236,7 +279,10 @@ class Alignment(object):
                 if x in equivalence and y in equivalence:
                     return True
             return False
-        
+
+        # FIXME: cover all combining character sequences here (not just umlauts)
+        # idea: assign all combining codepoints to previous position, leaving gap
+        #       (but do not add to gap)
         source_umlaut = ''
         target_umlaut = ''
         for source_sym, target_sym in alignment:
@@ -274,6 +320,10 @@ class Alignment(object):
                     dist += 1.0 # one full error (non-umlaut mismatch)
         if source_umlaut or target_umlaut: # previous umlaut error
             dist += 1.0 # one full error
+
+        # FIXME: determine WER as well
+        # idea: assign all non-spaces to previous position, leaving gap
+        #       collapse gap-gap pairs, 
         
         #length_reduction = max(source_text.count(u"\u0364"), target_text.count(u"\u0364"))
         return dist, max(len(source_text), len(target_text))
