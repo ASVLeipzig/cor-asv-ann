@@ -1,6 +1,8 @@
 # cor-asv-ann
     OCR post-correction with encoder-attention-decoder LSTMs
 
+[![CircleCI](https://circleci.com/gh/ASVLeipzig/cor-asv-ann.svg?style=svg)](https://circleci.com/gh/ASVLeipzig/cor-asv-ann)
+
 ## Introduction
 
 This is a tool for automatic OCR _post-correction_ (reducing optical character recognition errors) with recurrent neural networks. It uses sequence-to-sequence transduction on the _character level_ with a model architecture akin to neural machine translation, i.e. a stacked **encoder-decoder** network with attention mechanism. 
@@ -83,18 +85,26 @@ Required Ubuntu packages:
 
 * Python (``python`` or ``python3``)
 * pip (``python-pip`` or ``python3-pip``)
-* virtualenv (``python-virtualenv`` or ``python3-virtualenv``)
+* virtualenv (``python-venv`` or ``python3-venv``)
 
 Create and activate a virtualenv as usual.
 
-To install Python dependencies and this module, then do:
+To install Python dependencies:
 ```shell
-make deps install
+make deps
 ```
 Which is the equivalent of:
 ```shell
 pip install -r requirements.txt
-pip install -e .
+```
+
+To install this module, then do:
+```shell
+make install
+```
+Which is the equivalent of:
+```shell
+pip install .
 ```
 
 ## Usage
