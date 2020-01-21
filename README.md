@@ -67,14 +67,19 @@ Decode beamed, feeding back the argmax unit vectors for the best history/output 
 
 ### Evaluation
 
-Text lines can be compared (by aligning and computing a distance under some metric) across multiple inputs. (This would typically be GT and OCR vs post-correction.) This can be done both on plain text files (`cor-asv-ann-eval`) and PAGE-XML annotations (`ocrd-cor-asv-ann-evaluate`).
+Text lines can be compared (by aligning and computing a distance under some metric) across multiple inputs. (This would typically be GT and OCR vs post-correction.) This can be done both on plain text files (`cor-asv-ann-eval`) and PAGE-XML annotations (`ocrd-cor-asv-ann-evaluate`). 
 
-There are a number of distance metrics available:
-- `Levenshtein`: simple unweighted edit distance (fastest, standard)
-- `combining-e-umlauts`: like the former, but umlauts with combining letter e get smaller distance to precomposed umlauts (and vice versa), as in "Wuͤſte" (as opposed to "Wüſte")
-- `historic_latin`: like the former, but with additional exceptions (i.e. zero distances) for certain (isolated) character confusions – roughly the difference between GT level 1 and 2
-- `NFC`: like `Levenshtein`, but apply Unicode normal form with canonical composition before (i.e. less than `historic_latin`)
-- `NFKC`: like `Levenshtein`, but apply Unicode normal form with compatibility composition before (i.e. more than `historic_latin`)
+Distances are accumulated (as micro-averages) as character error rate (CER) mean and stddev, but only on the character level.
+
+There are a number of distance metrics available (all operating on grapheme clusters, not mere codepoints):
+- `Levenshtein`:  
+  simple unweighted edit distance (fastest, standard; GT level 3)
+- `NFC`:  
+  like `Levenshtein`, but apply Unicode normal form with canonical composition before (i.e. less than GT level 2)
+- `NFKC`:  
+  like `Levenshtein`, but apply Unicode normal form with compatibility composition before (i.e. less than GT level 2, except for `ſ`, which is already normalized to `s`)
+- `historic_latin`:  
+  like `Levenshtein`, but decomposing non-vocalic ligatures before and treating as equivalent (i.e. zero distances) confusions of certain semantically close characters often found in historic texts (e.g. umlauts with combining letter `e` as in `Wuͤſte` instead of  to `Wüſte`, `ſ` vs `s`, or quotation/citation marks; GT level 1)
 
 
 ## Installation
@@ -185,9 +190,9 @@ To be used with [PageXML](https://www.primaresearch.org/tools/PAGELibraries) doc
       "parameters": {
         "metric": {
           "type": "string",
-          "enum": ["Levenshtein", "combining-e-umlauts", "NFC", "NFKC", "historic_latin"],
+          "enum": ["Levenshtein", "NFC", "NFKC", "historic_latin"],
           "default": "Levenshtein",
-          "description": "Distance metric to calculate and aggregate"
+          "description": "Distance metric to calculate and aggregate: historic_latin for GT level 1, NFKC for GT level 2 (except ſ-s), Levenshtein for GT level 3"
         }
       }
     }

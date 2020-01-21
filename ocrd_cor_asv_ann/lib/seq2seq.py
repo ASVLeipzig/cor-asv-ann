@@ -6,7 +6,7 @@ import pickle
 import numpy as np
 import h5py
 
-from .alignment import Alignment
+from .alignment import Alignment, Edits
 
 GAP = '\a' # reserved character that does not get mapped (for gap repairs)
 
@@ -171,7 +171,7 @@ class Sequence2Sequence(object):
         self.encoder_decoder_model = None # combined model for training
         self.encoder_model = None # separate model for inference
         self.decoder_model = None # separate model for inference (but see _resync_decoder)
-        self.aligner = Alignment(0) # aligner (for evaluation) with internal state
+        self.aligner = Alignment(0, logger=self.logger) # aligner (for training) with internal state
         self.progbars = progbars
         self.status = 0 # empty / configured / trained?
     
@@ -631,10 +631,10 @@ class Sequence2Sequence(object):
             self.logger.critical('training failed')
             self.status = 1
     
-    def evaluate(self, filenames, fast=False):
+    def evaluate(self, filenames, fast=False, normalization='historic_latin', gt_level=1, confusion=10):
         '''evaluate model on text files
         
-        Pass the character sequence of lines in `filenames`, paired into
+        Pass the character sequence of lines in ``filenames``, paired into
         source and target (and possibly, source confidence values),
         to a loop predicting outputs with decoder feedback and greedy+beam search.
         The generator will open the file, looping over the complete set once,
@@ -642,15 +642,28 @@ class Sequence2Sequence(object):
         and the overall calculated character and word error rates of source (OCR)
         and prediction (greedy/beamed) against target (GT).
         
-        If `fast`, then skip beam search for single lines, and process all batches
+        If ``fast``, then skip beam search for single lines, and process all batches
         in parallel greedily.
+        
+        For ``normalization`` and ``gt_level``, see ``Alignment.get_adjusted_distance()``.
+        
+        If ``confusion`` is greater than zero, then aggregate (non-identity) edits
+        on the character level, and show this many most-frequent confusions in the end.
         '''
         # FIXME: stop using both greedy and beamed in 1 function
         assert self.status == 2
-        counts = [1e-9, 0, 0, 0, 1e-9, 0, 0, 0, 0., 0., 0]
-        c_ocr_aligner, w_ocr_aligner = Alignment(0, confusion=True), Alignment(0)
-        c_greedy_aligner, w_greedy_aligner = Alignment(0, confusion=True), Alignment(0)
-        c_beamed_aligner, w_beamed_aligner = Alignment(0, confusion=True), Alignment(0)
+        c_ocr_counts = Edits(self.logger)
+        w_ocr_counts = Edits(self.logger)
+        c_greedy_counts = Edits(self.logger)
+        w_greedy_counts = Edits(self.logger)
+        c_beamed_counts = Edits(self.logger)
+        w_beamed_counts = Edits(self.logger)
+        c_ocr_aligner = Alignment(0, logger=self.logger, confusion=confusion > 0)
+        w_ocr_aligner = Alignment(0, logger=self.logger)
+        c_greedy_aligner = Alignment(0, logger=self.logger, confusion=confusion > 0)
+        w_greedy_aligner = Alignment(0, logger=self.logger)
+        c_beamed_aligner = Alignment(0, logger=self.logger, confusion=confusion > 0)
+        w_beamed_aligner = Alignment(0, logger=self.logger)
         for batch_no, batch in enumerate(self.gen_lines(filenames, False)):
             source_lines, target_lines, sourceconf_lines = batch
             #bar.update(1)
@@ -680,44 +693,41 @@ class Sequence2Sequence(object):
                 
                 #metric = get_levenshtein_distance
                 
-                c_edits_ocr, c_total = c_ocr_aligner.get_adjusted_distance(source_lines[j], target_lines[j])
-                c_edits_greedy, _ = c_greedy_aligner.get_adjusted_distance(greedy_lines[j], target_lines[j])
-                c_edits_beamed, _ = c_beamed_aligner.get_adjusted_distance(beamed_lines[j], target_lines[j])
+                c_ocr_counts.add(c_ocr_aligner.get_adjusted_distance(source_lines[j], target_lines[j],
+                                                                     normalization=normalization,
+                                                                     gtlevel=gt_level))
+                c_greedy_counts.add(c_greedy_aligner.get_adjusted_distance(greedy_lines[j], target_lines[j],
+                                                                           normalization=normalization,
+                                                                           gtlevel=gt_level))
+                c_beamed_counts.add(c_beamed_aligner.get_adjusted_distance(beamed_lines[j], target_lines[j],
+                                                                           normalization=normalization,
+                                                                           gtlevel=gt_level))
                 
                 greedy_tokens = greedy_lines[j].split(" ")
                 beamed_tokens = beamed_lines[j].split(" ")
                 source_tokens = source_lines[j].split(" ")
                 target_tokens = target_lines[j].split(" ")
-
-                w_edits_ocr, w_total = w_ocr_aligner.get_adjusted_distance(source_tokens, target_tokens)
-                w_edits_greedy, _ = w_greedy_aligner.get_adjusted_distance(greedy_tokens, target_tokens)
-                w_edits_beamed, _ = w_beamed_aligner.get_adjusted_distance(beamed_tokens, target_tokens)
                 
-                counts[0] += c_total
-                counts[1] += c_edits_ocr
-                counts[2] += c_edits_greedy
-                counts[3] += c_edits_beamed
-                counts[4] += w_total
-                counts[5] += w_edits_ocr
-                counts[6] += w_edits_greedy
-                counts[7] += w_edits_beamed
+                w_ocr_counts.add(w_ocr_aligner.get_adjusted_distance(source_tokens, target_tokens))
+                w_greedy_counts.add(w_greedy_aligner.get_adjusted_distance(greedy_tokens, target_tokens))
+                w_beamed_counts.add(w_beamed_aligner.get_adjusted_distance(beamed_tokens, target_tokens))
                 
-            counts[8] += sum(greedy_scores)
-            counts[9] += sum(beamed_scores)
-            counts[10] += len(greedy_lines)
+            c_greedy_counts.score += sum(greedy_scores)
+            c_beamed_counts.score += sum(beamed_scores)
 
-        self.logger.info('finished %d lines', counts[10])
-        self.logger.info('OCR confusion: %s', c_ocr_aligner.get_confusion(10))
-        self.logger.info('greedy confusion: %s', c_greedy_aligner.get_confusion(10))
-        self.logger.info('beamed confusion: %s', c_beamed_aligner.get_confusion(10))
-        self.logger.info('ppl greedy: %.3f', math.exp(counts[8]/counts[10]))
-        self.logger.info('ppl beamed: %.3f', math.exp(counts[9]/counts[10]))
-        self.logger.info("CER OCR:    %.3f", counts[1] / counts[0])
-        self.logger.info("CER greedy: %.3f", counts[2] / counts[0])
-        self.logger.info("CER beamed: %.3f", counts[3] / counts[0])
-        self.logger.info("WER OCR:    %.3f", counts[5] / counts[4])
-        self.logger.info("WER greedy: %.3f", counts[6] / counts[4])
-        self.logger.info("WER beamed: %.3f", counts[7] / counts[4])
+        self.logger.info('finished %d lines', c_ocr_counts.length)
+        if confusion > 0:
+            self.logger.info('OCR confusion: %s', c_ocr_aligner.get_confusion(confusion))
+            self.logger.info('greedy confusion: %s', c_greedy_aligner.get_confusion(confusion))
+            self.logger.info('beamed confusion: %s', c_beamed_aligner.get_confusion(confusion))
+        self.logger.info('ppl greedy: %.3f', math.exp(c_greedy_counts.score/c_greedy_counts.length))
+        self.logger.info('ppl beamed: %.3f', math.exp(c_beamed_counts.score/c_beamed_counts.length))
+        self.logger.info("CER OCR:    %.3f±%.3f", c_ocr_counts.mean, math.sqrt(c_ocr_counts.varia))
+        self.logger.info("CER greedy: %.3f±%.3f", c_greedy_counts.mean, math.sqrt(c_greedy_counts.varia))
+        self.logger.info("CER beamed: %.3f±%.3f", c_beamed_counts.mean, math.sqrt(c_beamed_counts.varia))
+        self.logger.info("WER OCR:    %.3f±%.3f", w_ocr_counts.mean, math.sqrt(w_ocr_counts.varia))
+        self.logger.info("WER greedy: %.3f±%.3f", w_greedy_counts.mean, math.sqrt(w_greedy_counts.varia))
+        self.logger.info("WER beamed: %.3f±%.3f", w_beamed_counts.mean, math.sqrt(w_beamed_counts.varia))
         
     def correct_lines(self, lines, conf=None, fast=True, greedy=True):
         '''apply correction model on text strings

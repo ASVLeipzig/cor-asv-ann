@@ -1,6 +1,6 @@
 {
   "git_url": "https://github.com/ASVLeipzig/cor-asv-ann",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "tools": {
     "ocrd-cor-asv-ann-process": {
       "executable": "ocrd-cor-asv-ann-process",
@@ -50,9 +50,16 @@
       "parameters": {
         "metric": {
           "type": "string",
-          "enum": ["Levenshtein", "combining-e-umlauts", "NFC", "NFKC", "historic_latin"],
+          "enum": ["Levenshtein", "NFC", "NFKC", "historic_latin"],
           "default": "Levenshtein",
-          "description": "Distance metric to calculate and aggregate"
+          "description": "Distance metric to calculate and aggregate: historic_latin for GT level 1, NFKC for GT level 2 (except ſ-s), Levenshtein for GT level 3"
+        },
+        "confusion": {
+          "type": "number",
+          "format": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Count edits and show that number of most frequent confusions (non-identity) in the end."
         }
       }
     }
