@@ -3,7 +3,7 @@ import logging
 import bisect
 import unicodedata
 
-class Alignment(object):
+class Alignment():
     def __init__(self, gap_element=0, logger=None, confusion=False):
         self.confusion = dict() if confusion else None
         self.gap_element = gap_element
@@ -181,10 +181,57 @@ class Alignment(object):
         assert target_end == len(self.target_text), \
             'alignment does not span full sequence "%s" - %d' % (self.target_text, target_end)
 
-        if not self.confusion is None:
-            for pair in alignment1:
-                if pair[0] == pair[1]:
-                    continue
+        # re-combine grapheme clusters by assigning
+        # all combining codepoints to previous position,
+        # leaving gap (but never combining with gap or non-letter):
+        if not isinstance(self.source_text, list):
+            alignment2 = []
+            isnecessary = False
+            for source_sym, target_sym in alignment1:
+                if (source_sym != self.gap_element and
+                    unicodedata.combining(source_sym) and
+                    alignment2 and
+                    alignment2[-1][0] != self.gap_element and
+                    unicodedata.category(alignment2[-1][0][0])[0] == 'L'):
+                    alignment2[-1][0] += source_sym
+                    isnecessary = True
+                    if target_sym == self.gap_element:
+                        continue
+                    elif (unicodedata.combining(target_sym) and
+                          alignment2[-1][1] != self.gap_element and
+                          unicodedata.category(alignment2[-1][1][0])[0] == 'L'):
+                        alignment2[-1][1] += target_sym
+                        continue
+                    else:
+                        source_sym = self.gap_element
+                elif (target_sym != self.gap_element and
+                      unicodedata.combining(target_sym) and
+                      alignment2 and
+                      alignment2[-1][1] != self.gap_element and
+                      unicodedata.category(alignment2[-1][1][0])[0] == 'L'):
+                    alignment2[-1][1] += target_sym
+                    isnecessary = True
+                    if source_sym == self.gap_element:
+                        continue
+                    else:
+                        target_sym = self.gap_element
+                alignment2.append([source_sym, target_sym])
+            if isnecessary:
+                alignment1 = list(map(tuple, alignment2))
+        
+        if self.confusion is not None:
+            for pos, pair in enumerate(alignment1):
+                if pos > 0 and self.gap_element in pair and pair[0] != pair[1]:
+                    gap = pair.index(self.gap_element)
+                    non = (gap + 1) % 2
+                    prev_pair = alignment1[pos - 1]
+                    if prev_pair[non] == self.gap_element:
+                        # merge gap/non after non/gap to non/non
+                        self.confusion[prev_pair] -= 1
+                        if gap:
+                            pair = (pair[0], prev_pair[1])
+                        else:
+                            pair = (prev_pair[0], pair[1])
                 count = self.confusion.setdefault(pair, 0)
                 self.confusion[pair] = count + 1
         
@@ -212,7 +259,11 @@ class Alignment(object):
                 return self.count < other.count
             def __ge__(self, other):
                 return self.count <= other.count
+        total = 0
         for pair, count in self.confusion.items():
+            total += count
+            if pair[0] == pair[1]:
+                continue
             conf = Confusion(count, pair)
             length = len(table)
             idx = bisect.bisect_left(table, conf, hi=min(limit or length, length))
@@ -221,15 +272,32 @@ class Alignment(object):
             table.insert(idx, conf)
         if limit:
             table = table[:limit]
-        return table
+        return table, total
         
     def get_levenshtein_distance(self, source_text, target_text):
-        # alignment for evaluation only...
+        """Align strings and calculate raw unweighted edit distance between its codepoints."""
         import editdistance
         dist = editdistance.eval(source_text, target_text)
-        return dist, max(len(source_text), len(target_text))
+        length = len(target_text)
+        return dist/length if length else 0
     
-    def get_adjusted_distance(self, source_text, target_text, normalization=None):
+    def get_adjusted_distance(self, source_text, target_text, normalization=None, gtlevel=1):
+        """Normalize and align strings, recombining characters, and calculate unweighted edit distance.
+        
+        If ``normalization`` is a known Unicode canonicalization method,
+        or equals ``'historic_latin'`` (denoting certain historic ligatures
+        to be normalized when ``gtlevel<3``), then apply that transform
+        to both ``source_text`` and ``target_text`` separately.
+        
+        Next, find the best alignment between their codepoints. Afterwards,
+        recombine (sequences of) combining characters with preceding base letters.
+        
+        Finally, calculate the distance between these character strings.
+        If ``normalization=='historic_latin'``, then treat certain semantically
+        close pairs of characters as equal (not necessarily under NFC/NFKC).
+        
+        Return the arithmetic mean of the distances.
+        """
         import unicodedata
         def normalize(seq):
             if normalization in ['NFC', 'NFKC']:
@@ -237,17 +305,48 @@ class Alignment(object):
                     return [unicodedata.normalize(normalization, tok) for tok in seq]
                 else:
                     return unicodedata.normalize(normalization, seq)
+            elif normalization == 'historic_latin':
+                # multi-codepoint equivalences not involving combining characters:
+                equivalences = { # keep only vocalic ligatures...
+                    '': 'ſſ',
+                    "\ueba7": 'ſſi',  # MUFI: LATIN SMALL LIGATURE LONG S LONG S I
+                    '': 'ch',
+                    '': 'ck',
+                    '': 'll',
+                    '': 'ſi',
+                    '': 'ſt',
+                    'ﬁ': 'fi',
+                    'ﬀ': 'ff',
+                    'ﬂ': 'fl',
+                    'ﬃ': 'ffi',
+                    '': 'ct',
+                    '': 'tz',       # MUFI: LATIN SMALL LIGATURE TZ
+                    '\uf532': 'as',  # eMOP: Latin small ligature as
+                    '\uf533': 'is',  # eMOP: Latin small ligature is
+                    '\uf534': 'us',  # eMOP: Latin small ligature us
+                    '\uf535': 'Qu',  # eMOP: Latin ligature capital Q small u
+                    'ĳ': 'ij',       # U+0133 LATIN SMALL LIGATURE IJ
+                    '\uE8BF': 'q&',  # MUFI: LATIN SMALL LETTER Q LIGATED WITH FINAL ET  XXX How to replace this correctly?
+                    '\uEBA5': 'ſp',  # MUFI: LATIN SMALL LIGATURE LONG S P
+                    'ﬆ': 'st',      # U+FB06 LATIN SMALL LIGATURE ST
+                    '\uF50E': 'q́' # U+F50E LATIN SMALL LETTER Q WITH ACUTE ACCENT
+                } if gtlevel < 3 else {}
+                equivalences = str.maketrans(equivalences)
+                if isinstance(seq, list):
+                    return [tok.translate(equivalences) for tok in seq]
+                else:
+                    return seq.translate(equivalences)
             else:
                 return seq
-        self.set_seqs(normalize(source_text), normalize(target_text))
-        alignment = self.get_best_alignment()
-        dist = 0 # distance
-        
-        umlauts = {u"ä": "a", u"ö": "o", u"ü": "u"} # for combination with U+0363 (not in NFKC)
-        #umlauts = {}
-        if normalization == 'historic_latin':
+        if normalization == 'historic_latin' and gtlevel == 1:
             equivalences = [
                 # some of these are not even in NFKC:
+                {"ä", "ä", "a\u0364"},
+                {"ö", "ö", "o\u0364"},
+                {"ü", "ü", "u\u0364"},
+                {"Ä", "Ä", "A\u0364"},
+                {"Ö", "Ö", "O\u0364"},
+                {"Ü", "Ü", "U\u0364"},
                 {"s", "ſ"},
                 {"r", "ꝛ"},
                 {"0", "⁰"},
@@ -280,50 +379,51 @@ class Alignment(object):
                     return True
             return False
 
-        # FIXME: cover all combining character sequences here (not just umlauts)
-        # idea: assign all combining codepoints to previous position, leaving gap
-        #       (but do not add to gap)
-        source_umlaut = ''
-        target_umlaut = ''
+        self.set_seqs(normalize(source_text), normalize(target_text))
+        alignment = self.get_best_alignment()
+        
+        length = 0
+        dist = 0.0
         for source_sym, target_sym in alignment:
-            #print(source_sym, target_sym)
-            
+            #self.logger.debug('"%s"/"%s"', str(source_sym), str(target_sym))
+            if target_sym != self.gap_element:
+                length += 1
             if source_sym == target_sym or equivalent(source_sym, target_sym):
-                if source_umlaut: # previous source is umlaut non-error
-                    source_umlaut = False # reset
-                    dist += 1.0 # one full error (mismatch)
-                elif target_umlaut: # previous target is umlaut non-error
-                    target_umlaut = False # reset
-                    dist += 1.0 # one full error (mismatch)
+                pass
             else:
-                if source_umlaut: # previous source is umlaut non-error
-                    source_umlaut = False # reset
-                    if (source_sym == self.gap_element and
-                        target_sym == u"\u0364"): # diacritical combining e
-                        dist += 1.0 # umlaut error (umlaut match)
-                        #print('source umlaut match', a)
-                    else:
-                        dist += 2.0 # two full errors (mismatch)
-                elif target_umlaut: # previous target is umlaut non-error
-                    target_umlaut = False # reset
-                    if (target_sym == self.gap_element and
-                        source_sym == u"\u0364"): # diacritical combining e
-                        dist += 1.0 # umlaut error (umlaut match)
-                        #print('target umlaut match', a)
-                    else:
-                        dist += 2.0 # two full errors (mismatch)
-                elif source_sym in umlauts and umlauts[source_sym] == target_sym:
-                    source_umlaut = True # umlaut non-error
-                elif target_sym in umlauts and umlauts[target_sym] == source_sym:
-                    target_umlaut = True # umlaut non-error
-                else:
-                    dist += 1.0 # one full error (non-umlaut mismatch)
-        if source_umlaut or target_umlaut: # previous umlaut error
-            dist += 1.0 # one full error
-
+                dist += 1.0
+        # length = len(alignment) # normalized rate
+            
         # FIXME: determine WER as well
         # idea: assign all non-spaces to previous position, leaving gap
         #       collapse gap-gap pairs, 
         
-        #length_reduction = max(source_text.count(u"\u0364"), target_text.count(u"\u0364"))
-        return dist, max(len(source_text), len(target_text))
+        return dist / length if length else 0
+
+class Edits():
+    length = mean = varia = 0
+    score = 0
+    lines = 0
+    def __init__(self, logger=None):
+        self.logger = logger or logging.getLogger(__name__)
+    
+    # numerically stable parallel/subsample aggregation algorithm by Chan et al. 1979:
+    def update(self, length, mean, varia):
+        if length < 1:
+            return
+        delta = mean - self.mean
+        self.mean = (length * mean + self.length * self.mean) / (length + self.length)
+        self.varia = (length * varia + self.length * self.varia +
+                      delta ** 2 * length * self.length / (length + self.length))
+        self.length += length
+        self.varia /= self.length
+        logging.getLogger('').debug('N=%d→%d µ=%.2f→%.2f σ²=%.2f→%.2f',
+                                    length, self.length,
+                                    mean, self.mean,
+                                    varia, self.varia)
+    
+    def add(self, dist):
+        self.update(1, dist, 0)
+    
+    def merge(self, edits):
+        self.update(edits.length, edits.mean, edits.varia)

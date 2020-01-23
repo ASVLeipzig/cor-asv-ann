@@ -11,11 +11,18 @@ from ..lib.seq2seq import Sequence2Sequence
 # click.File is impossible since we do not now a priori whether
 # we have to deal with pickle dumps (mode 'rb', includes confidence)
 # or plain text files (mode 'r')
-@click.option('--fast', is_flag=True, help='only decode greedily')
-@click.option('--rejection', default=0.5, type=click.FloatRange(0,1.0),
+@click.option('-f', '--fast', is_flag=True, help='only decode greedily')
+@click.option('-r', '--rejection', default=0.5, type=click.FloatRange(0,1.0),
               help='probability of the input characters in all hypotheses (set 0 to use raw predictions)')
+@click.option('-n', '--normalization', default='historic_latin', type=click.Choice(
+    ["Levenshtein", "NFC", "NFKC", "historic_latin"]),
+              help='normalize character sequences before alignment/comparison (set Levenshtein for none)')
+@click.option('-l', '--gt-level', default=1, type=click.IntRange(1,3),
+              help='GT transcription level to use for historic_latin normlization (1: strongest, 3: none)')
+@click.option('-c', '--confusion', default=10, type=click.IntRange(min=0),
+              help='show this number of most frequent (non-identity) edits (set 0 for none)')
 @click.argument('data', nargs=-1, type=click.Path(dir_okay=False, exists=True))
-def cli(load_model, fast, rejection, data):
+def cli(load_model, fast, rejection, normalization, gt_level, confusion, data):
     """Evaluate a correction model.
     
     Load a sequence-to-sequence model from the given path.
@@ -35,4 +42,4 @@ def cli(load_model, fast, rejection, data):
     s2s.load_weights(load_model)
     s2s.rejection_threshold = rejection
     
-    s2s.evaluate(data, fast)
+    s2s.evaluate(data, fast, normalization, gt_level, confusion)
