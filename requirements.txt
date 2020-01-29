@@ -2,7 +2,7 @@ ocrd >= 2.0
 click
 keras <= 2.2.5
 numpy
-tensorflow == 1.15.1
+tensorflow == 1.15.2
 h5py
 editdistance
 matplotlib
