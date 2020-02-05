@@ -39,10 +39,14 @@ def cli():
                 ylabels = self.ax.yaxis.get_ticklabels()
                 xloc = np.searchsorted(xlocs, x)
                 yloc = np.searchsorted(ylocs, y)
-                xlabel = xlabels.get(xloc, None)
-                ylabel = ylabels.get(yloc, None)
-                xlabel = xlabel.get_text() if xlabel else '<unknown>'
-                ylabel = ylabel.get_text() if ylabel else '<unknown>'
+                try:
+                    xlabel = xlabels[xloc].get_text()
+                except IndexError:
+                    xlabel = 'unknown'
+                try:
+                    ylabel = ylabels[yloc].get_text()
+                except:
+                    ylabel = 'unknown'
                 return '%s|%s' % (xlabel, ylabel)
         encoder_input_data, _, _, _ = s2s.vectorize_lines([source_line + '\n'], [source_line + '\n'])
         gs = gridspec.GridSpec(2, 2, width_ratios=[5, 1])
