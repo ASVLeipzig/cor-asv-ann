@@ -23,7 +23,8 @@ def cli():
     history_path = os.path.expanduser("~/." + __name__ + "_history")
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
-    logging.basicConfig()
+    logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s',
+                        datefmt='%H:%M:%S')
     logging.getLogger(__name__).setLevel(logging.DEBUG)
     
     s2s = Sequence2Sequence(logger=logging.getLogger(__name__), progbars=True)

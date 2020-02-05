@@ -33,8 +33,9 @@ def cli(load_model, fast, rejection, normalization, gt_level, confusion, data):
     """
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
-    logging.basicConfig()
-    logging.getLogger(__name__).setLevel(logging.DEBUG)
+    logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s',
+                        datefmt='%H:%M:%S')
+    logging.getLogger(__name__).setLevel(logging.INFO)
     
     s2s = Sequence2Sequence(logger=logging.getLogger(__name__), progbars=True)
     s2s.load_config(load_model)
