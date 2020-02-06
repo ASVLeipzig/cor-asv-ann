@@ -508,6 +508,18 @@ class DenseAnnotationAttention(AttentionCellWrapper):
         self.kernel_constraint = constraints.get(kernel_constraint)
         self.bias_constraint = constraints.get(bias_constraint)
 
+    def build(self, input_shape):
+        # local attention hack:
+        shape = list(input_shape[0])
+        shape[-1] -= 1
+        input_shape[0] = tuple(shape)
+        return super(DenseAnnotationAttention, self).build(input_shape)
+    
+    def _get_cell_input(self, inputs, attention_h):
+        # local attention hack:
+        inputs = inputs[:, 1:] # without timestep
+        return super(DenseAnnotationAttention, self)._get_cell_input(inputs, attention_h)
+    
     def attention_call(self,
                        inputs,
                        cell_states,
@@ -515,6 +527,17 @@ class DenseAnnotationAttention(AttentionCellWrapper):
                        attention_states,
                        attended_mask,
                        training=None):
+        # local attention hack:
+        # We need an extra timestep input for localization of the energy vector
+        # within the attended/source sequence.
+        # But we cannot use list of inputs, because RNN does not allow
+        # passing multiple inputs together with initial_state/constants.
+        # So instead we insert it into the first input tensor
+        # (via concatenate layer in decoder layer definition and
+        #  extra input in inference decoder model definition),
+        # then split it off before reaching the cell
+        # (cf. overriding implementations of _get_cell_input() / build()).
+        timestep = inputs[:, 0:1]
         # there must be two attended sequences (verified in build)
         [attended, u] = attended
         attended_mask = attended_mask[0]
@@ -526,7 +549,24 @@ class DenseAnnotationAttention(AttentionCellWrapper):
 
         if attended_mask is not None:
             e = e * K.cast(K.expand_dims(attended_mask, -1), K.dtype(e))
-
+        # local attention hack:
+        # Now, independent of encoder input mask (which also
+        # suppresses output and state update of the base cell),
+        # apply another mask (purely filtering timesteps among
+        # the alignment coefficients) superimpose a dynamic mask:
+        window_width = 5
+        # shape(timestep): samples*1
+        # shape(steps): 1*source_len
+        # shape(mask): samples*source_len (by broadcasting)
+        steps = K.expand_dims(K.arange(K.shape(attended)[1], dtype='float32'), 0)
+        mask = K.relu(K.abs(timestep - steps),
+                      max_value=window_width, threshold=window_width)
+        # invert:
+        zero = K.zeros_like(mask)
+        mask = K.equal(mask, zero)
+        # apply:
+        e = e * K.cast(K.expand_dims(mask, -1), K.dtype(e))
+        
         a = e / K.sum(e, axis=1, keepdims=True)
         c = K.sum(a * attended, axis=1, keepdims=False)
 

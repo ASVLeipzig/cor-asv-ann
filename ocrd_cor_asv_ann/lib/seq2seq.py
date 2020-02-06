@@ -340,7 +340,13 @@ class Sequence2Sequence(object):
                     input_mode="concatenate",  # concat(input, context) when entering cell
                     output_mode="cell_output") # drop context when leaving cell
                 layer = RNN(cell=cell, **args)
-                decoder_output2, _, _, _ = layer(decoder_output,
+                # local attention hack:
+                def timesteps_like(x):
+                    return tf.tile(K.expand_dims(K.expand_dims(
+                        K.arange(K.shape(x)[1], dtype=K.dtype(x)),
+                        -1), 0), tf.stack([K.shape(x)[0], 1, 1]))
+                decoder_timestep = Lambda(timesteps_like)(decoder_output)
+                decoder_output2, _, _, _ = layer(concatenate([decoder_timestep, decoder_output]),
                                                  initial_state=encoder_state_outputs[2*n:2*n+3],
                                                  constants=[encoder_output,
                                                             attention_dense(encoder_output)])
@@ -447,8 +453,11 @@ class Sequence2Sequence(object):
                     input_mode="concatenate",  # concat(input, context) when entering cell
                     output_mode="cell_output") # drop context when leaving cell
                 layer = RNN(cell=cell, **args)
+                # local attention hack:
+                decoder_timestep = Input(shape=(None, 1),
+                                         name='decoder_timestep')
                 decoder_output, state_h_out, state_c_out, attention_state_out = layer(
-                    decoder_output,
+                    concatenate([decoder_timestep, decoder_output]),
                     initial_state=decoder_state_inputs[2*n:2*n+3],
                     constants=[attention_input,
                                attention_dense(attention_input)])
@@ -461,7 +470,7 @@ class Sequence2Sequence(object):
         decoder_output = char_output_proj(decoder_output)
         # must be resynced each time encoder_decoder_model changes:
         self.decoder_model = Model(
-            [decoder_input, attention_input] + decoder_state_inputs,
+            [decoder_input, decoder_timestep, attention_input] + decoder_state_inputs,
             [decoder_output, alignment_output] + decoder_state_outputs,
             name='decoder_model')
         
@@ -1093,7 +1102,7 @@ class Sequence2Sequence(object):
         '''
         assert self.status > 0 # already compiled
         self.logger.info('Loading model from "%s"', filename)
-        self.encoder_decoder_model.load_weights(filename)
+        self.encoder_decoder_model.load_weights(filename, by_name=True)
         self._resync_decoder()
         self.status = 2
     
@@ -1166,7 +1175,9 @@ class Sequence2Sequence(object):
         decoder_output_alignments = [[] for _ in range(batch_size)]
         for i in range(batch_length * 2):
             decoder_output_data[:, i] = decoder_input_data[:, -1]
-            output = self.decoder_model.predict_on_batch([decoder_input_data, encoder_output_data] + states_values)
+            decoder_timestep = np.ones((batch_size, 1, 1)) * i
+            output = self.decoder_model.predict_on_batch(
+                [decoder_input_data, decoder_timestep, encoder_output_data] + states_values)
             scores = output[0]
             alignment = output[1]
             indexes = np.nanargmax(scores[:, :, 1:], axis=2) # without index zero (underspecification)
@@ -1232,6 +1243,7 @@ class Sequence2Sequence(object):
         
         # Generate empty target sequence of length 1.
         target_seq = np.zeros((1, 1, self.voc_size), dtype=np.uint32)
+        target_ind = np.ones((1, 1, 1))
         # The first character (start symbol) stays empty.
         
         # Sampling loop for a batch of sequences
@@ -1240,8 +1252,8 @@ class Sequence2Sequence(object):
         decoded_probs = []
         decoded_score = 0
         alignments = []
-        for _ in range(attended_seq.shape[1] * 2):
-            output = self.decoder_model.predict_on_batch([target_seq, attended_seq] + states_values)
+        for i in range(attended_seq.shape[1] * 2):
+            output = self.decoder_model.predict_on_batch([target_seq, target_ind * i, attended_seq] + states_values)
             scores = output[0]
             alignment = output[1]
             states = output[2:]
@@ -1342,13 +1354,16 @@ class Sequence2Sequence(object):
             # use fringe leaves as minibatch, but with only 1 timestep
             if l == 0: # start symbol is true zero
                 target_seq = np.zeros((len(beam), 1, self.voc_size), dtype=np.uint32)
+                target_ind = np.zeros((len(beam), 1, 1))
             else:
                 target_seq = np.expand_dims(
                     np.eye(self.voc_size, dtype=np.uint32)[[self.mapping[0][node.value] for node in beam]],
                     axis=1) # add time dimension
+                target_ind = np.array([[[node.length - 1]] for node in beam])
             states_val = [np.vstack([node.state[layer] for node in beam])
                           for layer in range(len(beam[0].state))] # stack layers across batch
-            output = self.decoder_model.predict_on_batch([target_seq, attended_seq] + states_val)
+            output = self.decoder_model.predict_on_batch(
+                [target_seq, target_ind, attended_seq] + states_val)
             scores_output = output[0][:, -1] # only last timestep
             alignments = output[1][:, -1]
             states_output = list(output[2:]) # from (layers) tuple
