@@ -153,10 +153,7 @@ class Sequence2Sequence(object):
         ### beam decoder inference parameters
         # probability of the input character candidate in each hypothesis
         # (unless already misaligned); helps balance precision/recall trade-off
-        self.rejection_threshold = 0.5
-        # scale factor of extra cost for deviation from monotonically growing
-        # input-output character alignments
-        self.misalignment_penalty = 3
+        self.rejection_threshold = 0.3
         # up to how many new candidates can enter the beam per context/node?
         self.beam_width_in = 15
         # how much worse relative to the probability of the best candidate
@@ -301,7 +298,7 @@ class Sequence2Sequence(object):
         # just for convenience:
         # include zero as initial attention state in encoder state output
         # (besides final encoder state as initial cell state):
-        attention_init = Lambda(lambda x: K.zeros_like(x)[:, 0, :],
+        attention_init = Lambda(lambda x: K.zeros_like(x)[:, :, 0],
                                 name='attention_state_init')
         encoder_state_outputs.append(attention_init(encoder_output))
         # decoder-independent half of the encoder annotation
@@ -337,21 +334,14 @@ class Sequence2Sequence(object):
                     cell=LSTMCell(self.width,
                                   dropout=self.dropout,
                                   recurrent_activation='sigmoid'),
+                    window_width=5, # use local attention with 10 characters context
                     input_mode="concatenate",  # concat(input, context) when entering cell
                     output_mode="cell_output") # drop context when leaving cell
                 layer = RNN(cell=cell, **args)
-                # local attention hack:
-                def timesteps_like(x):
-                    return tf.tile(K.expand_dims(K.expand_dims(
-                        K.arange(K.shape(x)[1], dtype=K.dtype(x)),
-                        -1), 0), tf.stack([K.shape(x)[0], 1, 1]))
-                decoder_timestep = Lambda(timesteps_like)(decoder_output)
-                decoder_output2, _, _, _ = layer(concatenate([decoder_timestep, decoder_output]),
+                decoder_output2, _, _, _ = layer(decoder_output,
                                                  initial_state=encoder_state_outputs[2*n:2*n+3],
                                                  constants=[encoder_output,
                                                             attention_dense(encoder_output)])
-                # throw away alignment output:
-                decoder_output2 = Lambda(lambda x: x[:, :, :self.width])(decoder_output2)
             decoder_lstms.append(layer)
             # add residual connections:
             if n > 0 and self.residual_connections:
@@ -439,7 +429,7 @@ class Sequence2Sequence(object):
             else:
                 attention_input = Input(shape=(None, self.width),
                                         name='attention_input')
-                attention_state_in = Input(shape=(self.width,),
+                attention_state_in = Input(shape=(None,),
                                            name='attention_state_input')
                 decoder_state_inputs.append(attention_state_in)
                 # for some obscure reason, layer sharing is impossible
@@ -450,28 +440,23 @@ class Sequence2Sequence(object):
                     cell=LSTMCell(self.width,
                                   dropout=self.dropout,
                                   recurrent_activation='sigmoid'),
+                    window_width=5, # use local attention with 10 characters context
                     input_mode="concatenate",  # concat(input, context) when entering cell
                     output_mode="cell_output") # drop context when leaving cell
                 layer = RNN(cell=cell, **args)
-                # local attention hack:
-                decoder_timestep = Input(shape=(None, 1),
-                                         name='decoder_timestep')
                 decoder_output, state_h_out, state_c_out, attention_state_out = layer(
-                    concatenate([decoder_timestep, decoder_output]),
+                    decoder_output,
                     initial_state=decoder_state_inputs[2*n:2*n+3],
                     constants=[attention_input,
                                attention_dense(attention_input)])
                 decoder_state_outputs.extend([state_h_out,
                                               state_c_out,
                                               attention_state_out])
-                # split alignment and decoder output:
-                alignment_output = Lambda(lambda x: x[:, :, self.width:])(decoder_output)
-                decoder_output = Lambda(lambda x: x[:, :, :self.width])(decoder_output)
         decoder_output = char_output_proj(decoder_output)
         # must be resynced each time encoder_decoder_model changes:
         self.decoder_model = Model(
-            [decoder_input, decoder_timestep, attention_input] + decoder_state_inputs,
-            [decoder_output, alignment_output] + decoder_state_outputs,
+            [decoder_input, attention_input] + decoder_state_inputs,
+            [decoder_output] + decoder_state_outputs,
             name='decoder_model')
         
         ## Compile model
@@ -1175,11 +1160,11 @@ class Sequence2Sequence(object):
         decoder_output_alignments = [[] for _ in range(batch_size)]
         for i in range(batch_length * 2):
             decoder_output_data[:, i] = decoder_input_data[:, -1]
-            decoder_timestep = np.ones((batch_size, 1, 1)) * i
             output = self.decoder_model.predict_on_batch(
-                [decoder_input_data, decoder_timestep, encoder_output_data] + states_values)
+                [decoder_input_data, encoder_output_data] + states_values)
             scores = output[0]
-            alignment = output[1]
+            states_values = list(output[1:])
+            alignment = states_values[-1]
             indexes = np.nanargmax(scores[:, :, 1:], axis=2) # without index zero (underspecification)
             #decoder_input_data = np.eye(self.voc_size, dtype=np.uint32)[indexes+1] # unit vectors
             decoder_input_data = scores # soft/confidence input (much better)
@@ -1190,8 +1175,7 @@ class Sequence2Sequence(object):
                 decoder_output_sequences[j] += self.mapping[1][idx]
                 decoder_output_probs[j].append(scores[j, -1, idx])
                 decoder_output_scores[j] += logscores[j, -1, idx]
-                decoder_output_alignments[j].append(alignment[j, -1])
-            states_values = list(output[2:])
+                decoder_output_alignments[j].append(alignment[j])
         for j in range(batch_size):
             if decoder_output_sequences[j]:
                 decoder_output_scores[j] /= len(decoder_output_sequences[j])
@@ -1243,7 +1227,6 @@ class Sequence2Sequence(object):
         
         # Generate empty target sequence of length 1.
         target_seq = np.zeros((1, 1, self.voc_size), dtype=np.uint32)
-        target_ind = np.ones((1, 1, 1))
         # The first character (start symbol) stays empty.
         
         # Sampling loop for a batch of sequences
@@ -1253,10 +1236,9 @@ class Sequence2Sequence(object):
         decoded_score = 0
         alignments = []
         for i in range(attended_seq.shape[1] * 2):
-            output = self.decoder_model.predict_on_batch([target_seq, target_ind * i, attended_seq] + states_values)
+            output = self.decoder_model.predict_on_batch([target_seq, attended_seq] + states_values)
             scores = output[0]
-            alignment = output[1]
-            states = output[2:]
+            states = output[1:]
             
             # Sample a token:
             idx = np.nanargmax(scores[0, -1, :])
@@ -1272,7 +1254,7 @@ class Sequence2Sequence(object):
             decoded_text += char
             decoded_probs.append(prob)
             decoded_score += score
-            alignments.append(alignment)
+            alignments.append(states[-1][0])
             # Exit condition: end-of-sequence character.
             if char == '\n':
                 break
@@ -1323,7 +1305,7 @@ class Sequence2Sequence(object):
                           value='', cost=0.0,
                           prob=[], alignment=[],
                           length0=attended_len,
-                          cost0=self.misalignment_penalty)]
+                          cost0=3.0)] # quite pessimistic
         final_beam = []
         # how many batches (i.e. char hypotheses) will be processed per line at maximum?
         max_batches = attended_len * 2 # (usually) safe limit
@@ -1354,19 +1336,16 @@ class Sequence2Sequence(object):
             # use fringe leaves as minibatch, but with only 1 timestep
             if l == 0: # start symbol is true zero
                 target_seq = np.zeros((len(beam), 1, self.voc_size), dtype=np.uint32)
-                target_ind = np.zeros((len(beam), 1, 1))
             else:
                 target_seq = np.expand_dims(
                     np.eye(self.voc_size, dtype=np.uint32)[[self.mapping[0][node.value] for node in beam]],
                     axis=1) # add time dimension
-                target_ind = np.array([[[node.length - 1]] for node in beam])
             states_val = [np.vstack([node.state[layer] for node in beam])
                           for layer in range(len(beam[0].state))] # stack layers across batch
             output = self.decoder_model.predict_on_batch(
-                [target_seq, target_ind, attended_seq] + states_val)
+                [target_seq, attended_seq] + states_val)
             scores_output = output[0][:, -1] # only last timestep
-            alignments = output[1][:, -1]
-            states_output = list(output[2:]) # from (layers) tuple
+            states_output = list(output[1:]) # from (layers) tuple
             for i, node in enumerate(beam): # iterate over batch (1st dim)
                 # unstack layers for current sample:
                 states = [layer[i:i+1] for layer in states_output]
@@ -1375,25 +1354,18 @@ class Sequence2Sequence(object):
                 logscores = -np.log(scores[scores_order])
                 #
                 # estimate current alignment:
-                alignment = alignments[i]
-                #source_pos = np.argmax(alignment)
+                alignment = states[-1][-1]
+                #source_pos = np.argmax(alignment) # naive
                 source_pos = int(np.matmul(alignment, np.arange(attended_len)).round()) # more robust
                 if node.length > 1:
                     prev_alignment = node.alignment
-                    #prev_source_pos = np.argmax(prev_alignment)
+                    #prev_source_pos = np.argmax(prev_alignment) # naive
                     prev_source_pos = int(np.matmul(prev_alignment, np.arange(attended_len)).round()) # more robust
                 else:
                     prev_source_pos = -1
                 # self.logger.debug('%s: pos=%d prev_pos=%d',
                 #                   str(node), source_pos, prev_source_pos)
                 source_scores = source_seq[source_pos]
-                #
-                # penalize any deviation from linear 1:1 alignment:
-                #alignment_target = node.length - 1 # cumulative
-                alignment_target = prev_source_pos + 1 # differential
-                alignment_score = self.misalignment_penalty * \
-                                  np.matmul(alignment,
-                                            np.abs(alignment_target - np.arange(attended_len)))
                 #
                 # add fallback/rejection candidates regardless of beam threshold:
                 if (prev_source_pos < source_pos and # not twice on the same input
@@ -1437,12 +1409,11 @@ class Sequence2Sequence(object):
                     #
                     # add new hypothesis to the beam:
                     new_node = Node(parent=node, state=states,
-                                    value=value, cost=logscore + alignment_score,
+                                    value=value, cost=logscore,
                                     prob=np.exp(-logscore), alignment=alignment)
-                    self.logger.debug('pro_cost: %3.3f, cum_cost: %3.1f, aln_cost: %3.1f "%s"',
+                    self.logger.debug('pro_cost: %3.3f, cum_cost: %3.1f "%s"',
                                       new_node.pro_cost(),
                                       new_node.cum_cost,
-                                      alignment_score,
                                       str(new_node).strip('\n'))
                     insort_left(next_beam, new_node)
             # sanitize overall beam size:
@@ -1474,7 +1445,7 @@ class Node(object):
         self.length = 1 if parent is None else parent.length + 1
         # length of source sequence (for A* prospective cost estimation)
         self.length0 = length0 or (parent.length0 if parent else 1)
-        # additional (average) per-node costs (e.g. from misalignment_penalty)
+        # additional (average) per-node costs
         self.cost0 = cost0 or (parent.cost0 if parent else 0)
         # urgency? (l/max_batches)...
         # probability
