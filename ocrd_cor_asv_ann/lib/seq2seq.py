@@ -139,8 +139,14 @@ class Sequence2Sequence(object):
         # defined with tied decoder weights and same input, but
         # not conditioned on encoder output
         # (applies to encoder_decoder_model only, i.e. does not affect
-        #  encoder_model and decoder_model during inference)?
+        #  encoder_model and decoder_model during inference):
         self.lm_loss = False
+        # predict likewise, and use during beam search such that
+        # decoder scores control entry of local alternatives and
+        # LM scores rate global alternatives of the beam
+        # (applies to decoder_model only, but should be used on models
+        #  with lm_loss during training):
+        self.lm_predict = False
         # randomly train with decoder output from self-loop (softmax feedback)
         # instead of teacher forcing (with ratio given curve across epochs),
         # defined with tied weights and same encoder output
@@ -312,6 +318,8 @@ class Sequence2Sequence(object):
                               name='decoder_input')
         decoder_input0 = char_input_proj(decoder_input)
         decoder_output = decoder_input0
+        if self.lm_loss:
+            lm_output = decoder_input0
         
         # Set up decoder HL to return full output sequences (so we can train in parallel),
         # to use encoder_state_outputs as initial state and return final states as well.
@@ -329,19 +337,23 @@ class Sequence2Sequence(object):
                 layer = lstm(self.width, **args)
                 decoder_output2, _, _ = layer(decoder_output,
                                               initial_state=encoder_state_outputs[2*n:2*n+2])
+                if self.lm_loss:
+                    lm_output, _, _ = layer(lm_output)
             else:
                 cell = DenseAnnotationAttention(
-                    cell=LSTMCell(self.width,
-                                  dropout=self.dropout,
-                                  recurrent_activation='sigmoid'),
+                    LSTMCell(self.width,
+                             dropout=self.dropout,
+                             recurrent_activation='sigmoid'),
                     window_width=5, # use local attention with 10 characters context
                     input_mode="concatenate",  # concat(input, context) when entering cell
                     output_mode="cell_output") # drop context when leaving cell
-                layer = RNN(cell=cell, **args)
+                layer = RNN(cell, **args)
                 decoder_output2, _, _, _ = layer(decoder_output,
                                                  initial_state=encoder_state_outputs[2*n:2*n+3],
                                                  constants=[encoder_output,
                                                             attention_dense(encoder_output)])
+                if self.lm_loss:
+                    lm_output, _, _, _ = layer(lm_output)
             decoder_lstms.append(layer)
             # add residual connections:
             if n > 0 and self.residual_connections:
@@ -368,17 +380,8 @@ class Sequence2Sequence(object):
         char_output_proj = TimeDistributed(Lambda(char_embedding_transposed, name='transpose+softmax'),
                                           name='char_output_projection')
         decoder_output = char_output_proj(decoder_output)
-        
         if self.lm_loss:
-            lm_output = decoder_input0
-            for n in range(self.depth):
-                layer = decoder_lstms[n] # tied weights
-                if n == self.depth - 1:
-                    # top hidden layer is RNN(DenseAnnotationAttention(LSTMCell)):
-                    layer = RNN(layer.cell.cell, **args) # re-wrap cell
-                lm_output, _, _ = layer(lm_output)
             lm_output = char_output_proj(lm_output)
-            
             decoder_output = [decoder_output, lm_output] # 2 outputs, 1 combined loss
         
         # Bundle the model that will turn
@@ -413,19 +416,25 @@ class Sequence2Sequence(object):
         decoder_state_inputs = []
         decoder_state_outputs = []
         decoder_output = decoder_input0
+        if self.lm_predict:
+            lm_output = decoder_input0
         for n in range(self.depth):
             state_h_in = Input(shape=(self.width,),
                                name='initial_h_%d_input' % (n+1))
             state_c_in = Input(shape=(self.width,),
                                name='initial_c_%d_input' % (n+1))
             decoder_state_inputs.extend([state_h_in, state_c_in])
-            layer = decoder_lstms[n]
+            layer = decoder_lstms[n] # tied weights
             if n < self.depth - 1:
                 decoder_output, state_h_out, state_c_out = layer(
                     decoder_output,
                     initial_state=decoder_state_inputs[2*n:2*n+2])
                 decoder_state_outputs.extend([state_h_out,
                                               state_c_out])
+                if self.lm_predict:
+                    lm_output, _, _ = layer(
+                        lm_output,
+                        initial_state=decoder_state_inputs[2*n:2*n+2])
             else:
                 attention_input = Input(shape=(None, self.width),
                                         name='attention_input')
@@ -437,13 +446,13 @@ class Sequence2Sequence(object):
                 # and then resync weights after training/loading
                 # (see _resync_decoder):
                 cell = DenseAnnotationAttention(
-                    cell=LSTMCell(self.width,
-                                  dropout=self.dropout,
-                                  recurrent_activation='sigmoid'),
+                    LSTMCell(self.width,
+                             dropout=self.dropout,
+                             recurrent_activation='sigmoid'),
                     window_width=5, # use local attention with 10 characters context
                     input_mode="concatenate",  # concat(input, context) when entering cell
                     output_mode="cell_output") # drop context when leaving cell
-                layer = RNN(cell=cell, **args)
+                layer = RNN(cell, **args)
                 decoder_output, state_h_out, state_c_out, attention_state_out = layer(
                     decoder_output,
                     initial_state=decoder_state_inputs[2*n:2*n+3],
@@ -452,11 +461,22 @@ class Sequence2Sequence(object):
                 decoder_state_outputs.extend([state_h_out,
                                               state_c_out,
                                               attention_state_out])
+                if self.lm_predict:
+                    attention_zero = Lambda(lambda x: K.zeros_like(x))(attention_input)
+                    lm_output, _, _, _ = layer(
+                        lm_output,
+                        initial_state=decoder_state_inputs[2*n:2*n+3],
+                        constants=[attention_zero, attention_zero])
         decoder_output = char_output_proj(decoder_output)
+        if self.lm_predict:
+            lm_output = char_output_proj(lm_output)
+            decoder_output = [decoder_output, lm_output] # 2 outputs (1 for local, 1 for global scores)
+        else:
+            decoder_output = [decoder_output]
         # must be resynced each time encoder_decoder_model changes:
         self.decoder_model = Model(
             [decoder_input, attention_input] + decoder_state_inputs,
-            [decoder_output] + decoder_state_outputs,
+            decoder_output + decoder_state_outputs,
             name='decoder_model')
         
         ## Compile model
@@ -1238,7 +1258,10 @@ class Sequence2Sequence(object):
         for i in range(attended_seq.shape[1] * 2):
             output = self.decoder_model.predict_on_batch([target_seq, attended_seq] + states_values)
             scores = output[0]
-            states = output[1:]
+            if self.lm_predict:
+                states = output[2:]
+            else:
+                states = output[1:]
             
             # Sample a token:
             idx = np.nanargmax(scores[0, -1, :])
@@ -1343,7 +1366,11 @@ class Sequence2Sequence(object):
             output = self.decoder_model.predict_on_batch(
                 [target_seq, attended_seq] + states_val)
             scores_output = output[0][:, -1] # only last timestep
-            states_output = list(output[1:]) # from (layers) tuple
+            if self.lm_predict:
+                lmscores_output = output[1][:, -1]
+                states_output = list(output[2:])
+            else:
+                states_output = list(output[1:]) # from (layers) tuple
             for i, node in enumerate(beam): # iterate over batch (1st dim)
                 # unstack layers for current sample:
                 states = [layer[i:i+1] for layer in states_output]
@@ -1396,6 +1423,9 @@ class Sequence2Sequence(object):
                     pos += 1
                     score = scores[idx]
                     logscore = -np.log(score)
+                    if self.lm_predict:
+                        # use probability from LM instead of decoder for beam ratings
+                        logscore = -np.log(lmscores_output[i][idx])
                     alignment1 = alignment
                     if idx == rej_idx:
                         # self.logger.debug('adding rejection candidate "%s" [%.2f]',
