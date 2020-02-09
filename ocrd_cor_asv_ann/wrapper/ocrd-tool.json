@@ -35,6 +35,24 @@
           "enum": ["line", "word", "glyph"],
           "default": "glyph",
           "description": "PAGE XML hierarchy level to read/write TextEquiv input/output on"
+        },
+        "rejection_threshold": {
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "description": "minimum probability of the candidate corresponding to the input character in each hypothesis during beam search, helps balance precision/recall trade-off; set to 0 to disable rejection or 1 to disable correction"
+        },
+        "relative_beam_width": {
+          "type": "number",
+          "format": "float",
+          "default": 0.2,
+          "description": "minimum fraction of the best candidate's probability required to enter the beam in each hypothesis; controls the quality/performance trade-off"
+        },
+        "fixed_beam_width": {
+          "type": "number",
+          "format": "integer",
+          "default": 15,
+          "description": "maximum number of candidates allowed to enter the beam in each hypothesis; controls the quality/performance trade-off"
         }
       }
     },
@@ -47,6 +65,15 @@
         "recognition/evaluation"
       ],
       "description": "Align different textline annotations and compute distance",
+      "input_file_grp": [
+        "OCR-D-GT-SEG-LINE",
+        "OCR-D-OCR-TESS",
+        "OCR-D-OCR-KRAK",
+        "OCR-D-OCR-OCRO",
+        "OCR-D-OCR-CALA",
+        "OCR-D-OCR-ANY",
+        "OCR-D-COR-ASV"
+      ],
       "parameters": {
         "metric": {
           "type": "string",

@@ -25,17 +25,41 @@ class ANNCorrection(Processor):
         kwargs['ocrd_tool'] = OCRD_TOOL['tools'][TOOL_NAME]
         kwargs['version'] = OCRD_TOOL['version']
         super(ANNCorrection, self).__init__(*args, **kwargs)
-        if not hasattr(self, 'workspace') or not self.workspace:
+        if (not hasattr(self, 'workspace') or not self.workspace or
+            not hasattr(self, 'parameter') or not self.parameter):
             # no parameter/workspace for --dump-json or --version (no processing)
             return
         
         if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
             os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
+
+        def canread(path):
+            return os.path.isfile(path) and os.access(path, os.R_OK)
+        def getfile(path):
+            if canread(path):
+                return path
+            dirname = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                os.pardir, os.pardir)
+            if canread(os.path.join(dirname, path)):
+                return os.path.join(dirname, path)
+            dirname = os.path.join(dirname, 'models')
+            if canread(os.path.join(dirname, path)):
+                return os.path.join(dirname, path)
+            if 'CORASVANN_DATA' in os.environ:
+                dirname = os.environ['CORASVANN_DATA']
+                if canread(os.path.join(dirname, path)):
+                    return os.path.join(dirname, path)
+            raise Exception('Cannot find model_file in path "%s"' % path)
         
+        model_file = getfile(self.parameter['model_file'])
         self.s2s = Sequence2Sequence(logger=LOG, progbars=True)
-        self.s2s.load_config(self.parameter['model_file'])
+        self.s2s.load_config(model_file)
         self.s2s.configure()
-        self.s2s.load_weights(self.parameter['model_file'])
+        self.s2s.load_weights(model_file)
+        self.s2s.rejection_threshold = self.parameter['rejection_threshold']
+        self.s2s.beam_width_in = self.parameter['fixed_beam_width']
+        self.s2s.beam_threshold_in = self.parameter['relative_beam_width']
         
     def process(self):
         """Perform OCR post-correction with encoder-attention-decoder ANN on the workspace.
@@ -81,12 +105,12 @@ class ANNCorrection(Processor):
                 MetadataItemType(type_="processingStep",
                                  name=OCRD_TOOL['tools'][TOOL_NAME]['steps'][0],
                                  value=TOOL_NAME,
-                                 # FIXME: externalRef is invalid by pagecontent.xsd, but ocrd does not reflect this
-                                 # what we want here is `externalModel="ocrd-tool" externalId="parameters"`
-                                 Labels=[LabelsType(#externalRef="parameters",
-                                                    Label=[LabelType(type_=name,
-                                                                     value=self.parameter[name])
-                                                           for name in self.parameter.keys()])]))
+                                 Labels=[LabelsType(
+                                     externalModel="ocrd-tool",
+                                     externalId="parameters",
+                                     Label=[LabelType(type_=name,
+                                                      value=self.parameter[name])
+                                            for name in self.parameter.keys()])]))
             
             # get textequiv references for all lines:
             # FIXME: conf with TextEquiv alternatives
