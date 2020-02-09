@@ -6,6 +6,7 @@ from __future__ import print_function
 from keras import backend as K
 from keras import initializers, regularizers, constraints
 from keras.engine.base_layer import _collect_previous_mask
+from keras.engine.base_layer import disable_tracking
 from keras.layers import Layer, InputSpec
 from keras.layers import concatenate
 from keras.utils.generic_utils import has_arg, to_list
@@ -121,7 +122,7 @@ class AttentionCellWrapper(Layer):
                  input_mode="replace",
                  output_mode="cell_output",
                  **kwargs):
-        self.cell = cell  # must be set before calling super
+        self._set_cell(cell) # must be set before calling super
         super(AttentionCellWrapper, self).__init__(**kwargs)
         self.attend_after = attend_after
         if input_mode not in self._input_modes:
@@ -135,6 +136,20 @@ class AttentionCellWrapper(Layer):
         self.attended_spec = None
         self._attention_size = None
 
+    @disable_tracking
+    def _set_cell(self, cell):
+        # This is isolated in its own method in order to use
+        # the disable_tracking decorator without altering the
+        # visible signature of __init__.
+        # (We already add the cells weights to ours explicitly
+        #  in the non_/trainable_weights property. The inherited
+        #  tracking decorator would give the wrapping RNN double
+        #  references to the cell weights: via our property and
+        #  via the tracked _layers attribute of the wrapping RNN's
+        #  non_/trainable_weights property. This duplification
+        #  prohibits layer weight sharing and causes other problems.)
+        self.cell = cell
+        
     def attention_call(self,
                        inputs,
                        cell_states,
@@ -395,7 +410,6 @@ class AttentionCellWrapper(Layer):
 
             cell_input_shape = (input_shape[0], cell_input_size)
             self.cell.build(cell_input_shape)
-
         self.built = True
 
     def compute_output_shape(self, input_shape):
