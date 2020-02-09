@@ -207,10 +207,10 @@ class Sequence2Sequence(object):
         if batch_size:
             self.batch_size = batch_size
 
-        config = tf.ConfigProto()
+        config = tf.compat.v1.ConfigProto()
         config.gpu_options.allow_growth = True
-        K.set_session(tf.Session(config=config))
-        # self.sess = tf.Session()
+        K.set_session(tf.compat.v1.Session(config=config))
+        # self.sess = tf.compat.v1.Session()
         # K.set_session(self.sess)
         
         # automatically switch to CuDNNLSTM if CUDA GPU is available:
@@ -1049,6 +1049,7 @@ class Sequence2Sequence(object):
         # with the sample_weight parameter during fit() below
         decoder_output_weights = np.ones(decoder_output_data.shape[:-1], dtype=np.float32)
         decoder_output_weights[np.all(decoder_output_data == 0, axis=2)] = 0. # true zero (padding)
+        #sklearn.preprocessing.normalize(decoder_output_weights, norm='l1', copy=False) # since Keras 2.3
         if self.lm_loss:
             # 2 outputs, 1 combined loss:
             decoder_output_data = [decoder_output_data, decoder_output_data]
