@@ -158,7 +158,7 @@ class Sequence2Sequence(object):
         # input-output character alignments
         self.misalignment_penalty = 3
         # up to how many new candidates can enter the beam per context/node?
-        self.beam_width_in = 32
+        self.beam_width_in = 15
         # how much worse relative to the probability of the best candidate
         # may new candidates be to enter the beam?
         self.beam_threshold_in = 0.5
@@ -1303,15 +1303,18 @@ class Sequence2Sequence(object):
         if encoder_outputs is None:
             encoder_outputs = self.encoder_model.predict_on_batch(np.expand_dims(source_seq, axis=0))
         attended_seq = encoder_outputs[0] # constant
+        attended_len = attended_seq.shape[1]
         states_values = encoder_outputs[1:]
-
+        
         # Start with an empty beam (no input, only state):
         next_beam = [Node(state=states_values,
                           value='', cost=0.0,
-                          extras=(attended_seq.shape[1], [], []))]
+                          prob=[], alignment=[],
+                          length0=attended_len,
+                          cost0=self.misalignment_penalty)]
         final_beam = []
         # how many batches (i.e. char hypotheses) will be processed per line at maximum?
-        max_batches = attended_seq.shape[1] * 4 # (usually) safe limit
+        max_batches = attended_len * 2 # (usually) safe limit
         for l in range(max_batches):
             beam = []
             while next_beam:
@@ -1319,11 +1322,15 @@ class Sequence2Sequence(object):
                 if node.value == '\n': # end-of-sequence symbol?
                     insort_left(final_beam, node)
                     # self.logger.debug('%02d found new solution %.2f/"%s"',
-                    #                   l, node.pro_cost(), ''.join(node.to_sequence_of_values()).strip('\n'))
+                    #                   l, node.pro_cost(), str(node).strip('\n'))
                 else: # normal step
                     beam.append(node)
+                    if node.length > 1.5 * attended_len:
+                        self.logger.warning('found overlong hypothesis "%s" in "%s"',
+                                            str(node),
+                                            ''.join(self.mapping[1][np.nanargmax(step)] for step in source_seq))
                     # self.logger.debug('%02d new hypothesis %.2f/"%s"',
-                    #                   l, node.pro_cost(), ''.join(node.to_sequence_of_values()).strip('\n'))
+                    #                   l, node.pro_cost(), str(node).strip('\n'))
                 if len(beam) >= self.batch_size:
                     break # enough for one batch
             if not beam:
@@ -1353,19 +1360,17 @@ class Sequence2Sequence(object):
                 logscores = -np.log(scores[scores_order])
                 #
                 # estimate current alignment:
-                source_len = node.extras[0]
                 alignment = alignments[i]
                 #source_pos = np.argmax(alignment)
-                source_pos = int(np.matmul(alignment, np.arange(source_len)).round()) # more robust
+                source_pos = int(np.matmul(alignment, np.arange(attended_len)).round()) # more robust
                 if node.length > 1:
-                    prev_alignment = node.extras[2][-1]
+                    prev_alignment = node.alignment
                     #prev_source_pos = np.argmax(prev_alignment)
-                    prev_source_pos = int(np.matmul(prev_alignment, np.arange(source_len)).round()) # more robust
+                    prev_source_pos = int(np.matmul(prev_alignment, np.arange(attended_len)).round()) # more robust
                 else:
                     prev_source_pos = -1
                 # self.logger.debug('%s: pos=%d prev_pos=%d',
-                #                   ''.join(node.to_sequence_of_values()),
-                #                   source_pos, prev_source_pos)
+                #                   str(node), source_pos, prev_source_pos)
                 source_scores = source_seq[source_pos]
                 #
                 # penalize any deviation from linear 1:1 alignment:
@@ -1373,7 +1378,7 @@ class Sequence2Sequence(object):
                 alignment_target = prev_source_pos + 1 # differential
                 alignment_score = self.misalignment_penalty * \
                                   np.matmul(alignment,
-                                            np.abs(alignment_target - np.arange(source_len)))
+                                            np.abs(alignment_target - np.arange(attended_len)))
                 #
                 # add fallback/rejection candidates regardless of beam threshold:
                 if (prev_source_pos < source_pos and # not twice on the same input
@@ -1401,7 +1406,7 @@ class Sequence2Sequence(object):
                             # self.logger.debug('adding rejection candidate "%s" [%.2f]',
                             #                   self.mapping[1][rej_idx], logscore)
                             logscore = min(logscore, -np.log(self.rejection_threshold))
-                            alignment = np.eye(source_len)[source_pos]
+                            alignment = np.eye(attended_len)[source_pos]
                         rej_idx = None
                     elif pos > beampos:
                         if rej_idx: # not yet in beam
@@ -1418,13 +1423,12 @@ class Sequence2Sequence(object):
                     # add new hypothesis to the beam:
                     new_node = Node(parent=node, state=states,
                                     value=value, cost=logscore + alignment_score,
-                                    extras=(node.extras[0],
-                                            node.extras[1] + [np.exp(-logscore)],
-                                            node.extras[2] + [alignment]))
-                    # self.logger.debug('"%s" pro_cost: %.3f, cum_cost: %.1f, penalty: %.1f',
-                    #                   ''.join(new_node.to_sequence_of_values()),
-                    #                   new_node.pro_cost(),
-                    #                   new_node.cum_cost, alignment_score)
+                                    prob=np.exp(-logscore), alignment=alignment)
+                    self.logger.debug('pro_cost: %3.3f, cum_cost: %3.1f, aln_cost: %3.1f "%s"',
+                                      new_node.pro_cost(),
+                                      new_node.cum_cost,
+                                      alignment_score,
+                                      str(new_node).strip('\n'))
                     insort_left(next_beam, new_node)
             # sanitize overall beam size:
             if len(next_beam) > max_batches * self.batch_size: # more than can ever be processed within limits?
@@ -1436,22 +1440,34 @@ class Sequence2Sequence(object):
                                 ''.join(self.mapping[1][np.nanargmax(step)] for step in source_seq))
         while final_beam:
             node = final_beam.pop()
-            yield (''.join(node.to_sequence_of_values()),
-                   node.extras[1],
-                   node.cum_cost / (node.length - 1), node.extras[2])
+            nodes = node.to_sequence()[1:]
+            yield (''.join(n.value for n in nodes),
+                   [n.prob for n in nodes],
+                   node.cum_cost / (node.length - 1),
+                   [n.alignment for n in nodes])
 
 class Node(object):
-    def __init__(self, state, value, cost, parent=None, extras=None):
+    """One hypothesis in the character beam (trie)"""
+    def __init__(self, state, value, cost, parent=None, prob=1.0, alignment=None, length0=None, cost0=None):
         super(Node, self).__init__()
+        self._sequence = None
         self.value = value # character
         self.parent = parent # parent Node, None for root
         self.state = state # recurrent layer hidden state
         self.cum_cost = parent.cum_cost + cost if parent else cost # e.g. -log(p) of sequence up to current node (including)
+        # length of 
         self.length = 1 if parent is None else parent.length + 1
-        # tuple: length of source sequence (for A* prospective cost),
-        #        list of probabilities, and alignment list
-        self.extras = extras
-        self._sequence = None
+        # length of source sequence (for A* prospective cost estimation)
+        self.length0 = length0 or (parent.length0 if parent else 1)
+        # additional (average) per-node costs (e.g. from misalignment_penalty)
+        self.cost0 = cost0 or (parent.cost0 if parent else 0)
+        # urgency? (l/max_batches)...
+        # probability
+        self.prob = prob
+        if alignment is None:
+            self.alignment = parent.alignment if parent else []
+        else:
+            self.alignment = alignment
     
     def to_sequence(self):
         # Return sequence of nodes from root to current node.
@@ -1463,16 +1479,22 @@ class Node(object):
                 current_node = current_node.parent
         return self._sequence
     
-    def to_sequence_of_values(self):
-        return [s.value for s in self.to_sequence()[1:]]
+    def __str__(self):
+        return ''.join(n.value for n in self.to_sequence()[1:])
     
     # for sort order, use cumulative costs relative to length
     # (in order to get a fair comparison across different lengths,
     #  and hence, breadth-first search), and use inverse order
     # (so the faster bisect() and pop() can be used)
+    # [must be pessimistic estimation of final cum_cost]
     def pro_cost(self):
-        #return - (self.cum_cost + 0.5 * math.fabs(self.length - self.extras[0])) / self.length
-        return - (self.cum_cost + self.cum_cost/self.length * max(0, self.extras[0] - self.length)) / self.length
+        # v0.1.0:
+        #return - (self.cum_cost + 0.5 * math.fabs(self.length - self.length0)) / self.length
+        # v0.1.1:
+        #return - (self.cum_cost + self.cum_cost/self.length * max(0, self.length0 - self.length)) / self.length
+        # v0.1.2:
+        #return - (self.cum_cost + (28 + self.cost0) * self.length0 * np.abs(1 - np.sqrt(self.length / self.length0)))
+        return - (self.cum_cost + self.cost0 * np.abs(self.length - self.length0))
     
     def __lt__(self, other):
         return self.pro_cost() < other.pro_cost()
