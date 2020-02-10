@@ -158,7 +158,7 @@ class Sequence2Sequence(object):
         self.beam_width_in = 15
         # how much worse relative to the probability of the best candidate
         # may new candidates be to enter the beam?
-        self.beam_threshold_in = 0.5
+        self.beam_threshold_in = 0.2
         # up to how many results can be drawn from result generator?
         self.beam_width_out = 16
 
@@ -1302,8 +1302,9 @@ class Sequence2Sequence(object):
         
         # Start with an empty beam (no input, only state):
         next_beam = [Node(state=states_values,
-                          value='', cost=0.0,
-                          prob=[], alignment=[],
+                          value='', scores=np.zeros(self.voc_size),
+                          prob=[], cost=0.0,
+                          alignment=[],
                           length0=attended_len,
                           cost0=3.0)] # quite pessimistic
         final_beam = []
@@ -1334,12 +1335,9 @@ class Sequence2Sequence(object):
                 break # it is unlikely that later iterations will find better top n results
             
             # use fringe leaves as minibatch, but with only 1 timestep
-            if l == 0: # start symbol is true zero
-                target_seq = np.zeros((len(beam), 1, self.voc_size), dtype=np.uint32)
-            else:
-                target_seq = np.expand_dims(
-                    np.eye(self.voc_size, dtype=np.uint32)[[self.mapping[0][node.value] for node in beam]],
-                    axis=1) # add time dimension
+            target_seq = np.expand_dims(
+                np.vstack([node.scores for node in beam]),
+                axis=1) # add time dimension
             states_val = [np.vstack([node.state[layer] for node in beam])
                           for layer in range(len(beam[0].state))] # stack layers across batch
             output = self.decoder_model.predict_on_batch(
@@ -1417,9 +1415,21 @@ class Sequence2Sequence(object):
                         continue # ignore this alternative
                     #
                     # add new hypothesis to the beam:
+                    # for decoder feedback, use a compromise between
+                    #  - raw predictions (used in greedy decoder,
+                    #    still informative of ambiguity), and
+                    #  - argmax unit vectors (allowing alternatives,
+                    #    but introducing label bias)
+                    scores1 = np.copy(scores)
+                    # already slightly better than unit vectors:
+                    # scores1 *= scores[idx] / highest
+                    # scores1[idx] = scores[idx] # keep
+                    # only disable maxima iteratively:
+                    scores[idx] = 0
                     new_node = Node(parent=node, state=states,
-                                    value=value, cost=logscore,
-                                    prob=score, alignment=alignment1)
+                                    value=value, scores=scores1,
+                                    prob=score, cost=logscore,
+                                    alignment=alignment1)
                     # self.logger.debug('pro_cost: %3.3f, cum_cost: %3.1f, "%s"',
                     #                   new_node.pro_cost(),
                     #                   new_node.cum_cost,
@@ -1443,7 +1453,7 @@ class Sequence2Sequence(object):
 
 class Node(object):
     """One hypothesis in the character beam (trie)"""
-    def __init__(self, state, value, cost, parent=None, prob=1.0, alignment=None, length0=None, cost0=None):
+    def __init__(self, state, value, scores, cost, parent=None, prob=1.0, alignment=None, length0=None, cost0=None):
         super(Node, self).__init__()
         self._sequence = None
         self.value = value # character
@@ -1459,6 +1469,7 @@ class Node(object):
         # urgency? (l/max_batches)...
         # probability
         self.prob = prob
+        self.scores = scores
         if alignment is None:
             self.alignment = parent.alignment if parent else []
         else:
