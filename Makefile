@@ -1,17 +1,17 @@
 # BEGIN-EVAL makefile-parser --make-help Makefile
 
 SHELL = /bin/bash
-PYTHON = python
-PIP = pip
+PYTHON ?= python
+PIP ?= pip
 
 help:
 	@echo ""
 	@echo "  Targets"
 	@echo ""
-	@echo "    deps       pip install -r requirements.txt"
+	@echo "    deps       (install required Python packages)"
 	#@echo "    deps-test  pip install -r requirements_test.txt"
 	@echo ""
-	@echo "    install    pip install -e ."
+	@echo "    install    (install this Python package)"
 	#@echo "    test       python -m pytest test"
 
 # END-EVAL
@@ -27,7 +27,7 @@ deps:
 # 	sudo apt-get install -y \
 # 		...
 
-install:
-	$(PIP) install -e .
+install: deps
+	$(PIP) install .
 
 .PHONY: help deps install # deps-test test

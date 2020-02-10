@@ -1,0 +1,20 @@
+version: 2.1
+jobs:
+
+  build-python3:
+    docker:
+      - image: ocrd/core
+    environment:
+      PIP: pip3
+      PYTHON: python3
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends make git
+      - checkout
+      - run: make deps
+      - run: make install
+
+workflows:
+  version: 2
+  build-and-test:
+    jobs:
+      - build-python3
