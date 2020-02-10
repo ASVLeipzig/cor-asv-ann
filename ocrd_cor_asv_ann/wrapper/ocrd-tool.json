@@ -40,7 +40,7 @@
           "type": "number",
           "format": "float",
           "default": 0.5,
-          "description": "minimum probability of the candidate corresponding to the input character in each hypothesis during beam search, helps balance precision/recall trade-off; set to 0 to disable rejection or 1 to disable correction"
+          "description": "minimum probability of the candidate corresponding to the input character in each hypothesis during beam search, helps balance precision/recall trade-off; set to 0 to disable rejection (max recall) or 1 to disable correction (max precision)"
         },
         "relative_beam_width": {
           "type": "number",
@@ -53,6 +53,11 @@
           "format": "integer",
           "default": 15,
           "description": "maximum number of candidates allowed to enter the beam in each hypothesis; controls the quality/performance trade-off"
+        },
+        "fast_mode": {
+          "type": "boolean",
+          "default": false,
+          "description": "decode greedy instead of beamed, with batches of parallel lines instead of parallel alternatives; also disables rejection and beam parameters; enable if performance is far more important than quality"
         }
       }
     },

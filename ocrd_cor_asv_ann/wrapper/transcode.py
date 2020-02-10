@@ -95,9 +95,11 @@ class ANNCorrection(Processor):
         # its classes are not hashable.
         level = self.parameter['textequiv_level']
         for n, input_file in enumerate(self.input_files):
-            LOG.info("INPUT FILE %i / %s", n, input_file)
+            LOG.info("INPUT FILE %i / %s", n, input_file.pageId or input_file.ID)
+
             pcgts = page_from_file(self.workspace.download_file(input_file))
-            LOG.info("Correcting text in page '%s' at the %s level", pcgts.get_pcGtsId(), level)
+            page_id = pcgts.pcGtsId or input_file.pageId or input_file.ID # (PageType has no id)
+            LOG.info("Correcting text in page '%s' at the %s level", page_id, level)
             
             # annotate processing metadata:
             metadata = pcgts.get_Metadata() # ensured by from_file()
@@ -123,7 +125,9 @@ class ANNCorrection(Processor):
             # correct string and get input-output alignment:
             # FIXME: split into self.batch_size chunks
             output_lines, output_probs, output_scores, alignments = (
-                self.s2s.correct_lines(input_lines, conf, fast=True, greedy=True))
+                self.s2s.correct_lines(input_lines, conf,
+                                       fast=self.parameter['fast_mode'],
+                                       greedy=self.parameter['fast_mode']))
             
             # re-align (from alignment scores) and overwrite the textequiv references:
             for (input_line, output_line, output_prob,
@@ -154,12 +158,15 @@ class ANNCorrection(Processor):
             page_update_higher_textequiv_levels(level, pcgts)
             
             # write back result to new annotation:
-            file_id = concat_padded(self.output_file_grp, n)
+            file_id = input_file.ID.replace(self.input_file_grp, self.output_file_grp)
+            if file_id == input_file.ID:
+                file_id = concat_padded(self.output_file_grp, n)
+            file_path = os.path.join(self.output_file_grp, file_id + '.xml')
             self.workspace.add_file(
                 ID=file_id,
                 file_grp=self.output_file_grp,
                 pageId=input_file.pageId,
-                local_filename=os.path.join(self.output_file_grp, file_id + '.xml'), # with suffix or bare?
+                local_filename=file_path,
                 mimetype=MIMETYPE_PAGE,
                 content=to_xml(pcgts))
             
