@@ -1350,31 +1350,40 @@ class Sequence2Sequence(object):
                 # unstack layers for current sample:
                 states = [layer[i:i+1] for layer in states_output]
                 scores = scores_output[i]
-                scores_order = np.argsort(scores) # still in reverse order (worst first)
-                logscores = -np.log(scores[scores_order])
                 #
-                # estimate current alignment:
+                # estimate current alignment target:
                 alignment = states[-1][-1]
-                #source_pos = np.argmax(alignment) # naive
-                source_pos = int(np.matmul(alignment, np.arange(attended_len)).round()) # more robust
+                misalignment = 0.0
                 if node.length > 1:
                     prev_alignment = node.alignment
-                    #prev_source_pos = np.argmax(prev_alignment) # naive
-                    prev_source_pos = int(np.matmul(prev_alignment, np.arange(attended_len)).round()) # more robust
+                    prev_source_pos = np.matmul(prev_alignment, np.arange(attended_len))
+                    source_pos = np.matmul(alignment, np.arange(attended_len))
+                    misalignment = np.abs(source_pos - prev_source_pos - 1)
+                    if np.max(prev_alignment) == 1.0:
+                        # previous choice was rejection
+                        source_pos = int(prev_source_pos) + 1
+                    else:
+                        source_pos = int(source_pos.round())
                 else:
-                    prev_source_pos = -1
-                # self.logger.debug('%s: pos=%d prev_pos=%d',
-                #                   str(node), source_pos, prev_source_pos)
-                source_scores = source_seq[source_pos]
+                    source_pos = 0
                 #
                 # add fallback/rejection candidates regardless of beam threshold:
-                if (prev_source_pos < source_pos and # not twice on the same input
-                    np.any(source_scores)):
+                source_scores = source_seq[source_pos]
+                if (self.rejection_threshold
+                    and (misalignment < 0.1 or np.max(node.alignment) == 1.0)
+                    and np.any(source_scores)):
                     rej_idx = np.nanargmax(source_scores)
+                    # use a fixed minimum probability
+                    if scores[rej_idx] < self.rejection_threshold:
+                        #scores *= self.rejection_threshold - scores[rej_idx] # renormalize
+                        scores[rej_idx] = self.rejection_threshold # overwrite
+                    # self.logger.debug('%s: rej=%s (%.2f)', str(node),
+                    #                   self.mapping[1][rej_idx], scores[rej_idx])
                 else:
                     rej_idx = None
                 # 
                 # determine beam width from beam threshold to add normal candidates:
+                scores_order = np.argsort(scores) # still in reverse order (worst first)
                 highest = scores[scores_order[-1]]
                 beampos = self.voc_size - np.searchsorted(
                     scores[scores_order],
@@ -1385,15 +1394,15 @@ class Sequence2Sequence(object):
                 pos = 0
                 #
                 # follow up on best predictions, in true order (best first):
-                for idx, logscore in zip(reversed(scores_order), reversed(logscores)):
+                for idx in reversed(scores_order):
                     pos += 1
+                    score = scores[idx]
+                    logscore = -np.log(score)
+                    alignment1 = alignment
                     if idx == rej_idx:
-                        # use a fixed minimum probability
-                        if self.rejection_threshold:
-                            # self.logger.debug('adding rejection candidate "%s" [%.2f]',
-                            #                   self.mapping[1][rej_idx], logscore)
-                            logscore = min(logscore, -np.log(self.rejection_threshold))
-                            alignment = np.eye(attended_len)[source_pos]
+                        # self.logger.debug('adding rejection candidate "%s" [%.2f]',
+                        #                   self.mapping[1][rej_idx], logscore)
+                        alignment1 = np.eye(attended_len)[source_pos]
                         rej_idx = None
                     elif pos > beampos:
                         if rej_idx: # not yet in beam
@@ -1410,11 +1419,11 @@ class Sequence2Sequence(object):
                     # add new hypothesis to the beam:
                     new_node = Node(parent=node, state=states,
                                     value=value, cost=logscore,
-                                    prob=np.exp(-logscore), alignment=alignment)
-                    self.logger.debug('pro_cost: %3.3f, cum_cost: %3.1f "%s"',
-                                      new_node.pro_cost(),
-                                      new_node.cum_cost,
-                                      str(new_node).strip('\n'))
+                                    prob=score, alignment=alignment1)
+                    # self.logger.debug('pro_cost: %3.3f, cum_cost: %3.1f, "%s"',
+                    #                   new_node.pro_cost(),
+                    #                   new_node.cum_cost,
+                    #                   str(new_node).strip('\n'))
                     insort_left(next_beam, new_node)
             # sanitize overall beam size:
             if len(next_beam) > max_batches * self.batch_size: # more than can ever be processed within limits?
