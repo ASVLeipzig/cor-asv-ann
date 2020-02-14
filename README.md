@@ -1,7 +1,32 @@
+[![CircleCI](https://circleci.com/gh/ASVLeipzig/cor-asv-ann.svg?style=svg)](https://circleci.com/gh/ASVLeipzig/cor-asv-ann)
+[![PyPI version](https://badge.fury.io/py/ocrd-cor-asv-ann.svg)](https://badge.fury.io/py/ocrd-cor-asv-ann)
+
 # cor-asv-ann
     OCR post-correction with encoder-attention-decoder LSTMs
 
-[![CircleCI](https://circleci.com/gh/ASVLeipzig/cor-asv-ann.svg?style=svg)](https://circleci.com/gh/ASVLeipzig/cor-asv-ann)
+Contents:
+  * [Introduction](#introduction)
+     * [Architecture](#architecture)
+     * [Multi-OCR input](#multi-ocr-input)
+     * [Decoder feedback](#decoder-feedback)
+     * [Decoder modes](#decoder-modes)
+        * [<em>fast</em>](#fast)
+        * [<em>greedy</em>](#greedy)
+        * [<em>default</em>](#default)
+     * [Rejection](#rejection)
+     * [Underspecification and gap](#underspecification-and-gap)
+     * [Training](#training)
+     * [Processing PAGE annotations](#processing-page-annotations)
+     * [Evaluation](#evaluation)
+  * [Installation](#installation)
+  * [Usage](#usage)
+     * [command line interface cor-asv-ann-train](#command-line-interface-cor-asv-ann-train)
+     * [command line interface cor-asv-ann-eval](#command-line-interface-cor-asv-ann-eval)
+     * [command line interface cor-asv-ann-repl](#command-line-interface-cor-asv-ann-repl)
+     * [<a href="https://ocr-d.github.io/cli" rel="nofollow">OCR-D processor</a> interface ocrd-cor-asv-ann-process](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)
+     * [<a href="https://ocr-d.github.io/cli" rel="nofollow">OCR-D processor</a> interface ocrd-cor-asv-ann-evaluate](#ocr-d-processor-interface-ocrd-cor-asv-ann-evaluate)
+  * [Testing](#testing)
+
 
 ## Introduction
 
@@ -11,7 +36,10 @@ This is a tool for automatic OCR _post-correction_ (reducing optical character r
 
 The **attention model** always applies to full lines (in a _local, monotonic_ configuration), and uses a linear _additive_ alignment model. (This transfers information between the encoder and decoder hidden layer states, and calculates a _soft alignment_ between input and output characters. It is imperative for character-level processing, because with a simple final-initial transfer, models tend to start "forgetting" the input altogether at some point in the line and behave like unconditional LM generators. Local alignment is necessary to prevent snapping back to earlier states during long sequences.)
 
-The **architecture** is as follows: 
+The **network architecture** is as follows: 
+
+![network architecture](./scheme.svg "topology for depth=1 width=3")
+
 0. The input characters are represented as unit vectors (or as a probability distribution in case of uncertainty and ambiguity). These enter a dense projection layer to be picked up by the encoder.
 1. The bottom hidden layer of the encoder is a bi-directional LSTM. 
 2. The next encoder layers are forward LSTMs stacked on top of each other. 
@@ -30,6 +58,8 @@ HL depth and width, as well as many other topology and training options can be c
 - deep bidirectional encoder (with fw/bw cross-summarization)?
 - LM loss/prediction as secondary output (multi-task learning, dual scoring)?
 
+(cf. [training options](#Training))
+
 ### Multi-OCR input
 
 not yet!
@@ -44,7 +74,7 @@ This can even be done for beam search (which normally splits up the full distrib
 
 While the _encoder_ can always be run in parallel over a batch of lines and by passing the full sequence of characters in one tensor (padded to the longest line in the batch), which is very efficient with Keras backends like Tensorflow, a **beam-search** _decoder_ requires passing initial/final states character-by-character, with parallelism employed to capture multiple history hypotheses of a single line. However, one can also **greedily** use the best output only for each position (without beam search). This latter option also allows to run in parallel over lines, which is much faster – consuming up to ten times less CPU time.
 
-Thererfore, the backend function `lib.Sequence2Sequence.correct_lines` can operate the decoder network in either of the following modes:
+Thererfore, the backend function can operate the decoder network in either of the following modes:
 
 #### _fast_
 
@@ -72,6 +102,8 @@ Decode beamed, selecting the best output candidates of the best history hypothes
 
 During beam search (default decoder mode), whenever the input and output is in good alignment (i.e. the attention model yields an alignment approximately 1 character after their predecessor's alignment on average), it is possible to estimate the current position in the source string. This input character's predicted output score, when smaller than a given (i.e. variable) probability threshold can be clipped to that minimum. This effectively adds a candidate which _rejects_ correction at that position (keeping the input unchanged).
 
+![rejection example](./rejection.png "soft alignment and probabilities, greedy and beamed (red is rejection)")
+
 ### Underspecification and gap
 
 Input characters that have not been seen during training must be well-behaved at inference time: They must be represented by a reserved index, and should behave like **neutral/unknown** characters instead of spoiling HL states and predictions in a longer follow-up context. This is achieved by dedicated leave-one-out training and regularization to optimize for interpolation of all known characters. At runtime, the encoder merely shows a warning of the previously unseen character.
@@ -88,9 +120,9 @@ Possibilities:
 
 ### Processing PAGE annotations
 
-When applied on PAGE-XML (as OCR-D workspace processor), this component also allows processing below the `TextLine` hierarchy level, i.e. on `Word` or `Glyph` level. For that it uses the soft alignment scores to calculate an optimal hard alignment path for characters, and thereby distributes the transduction onto the lower level elements (keeping their coordinates and other meta-data), while changing Word segmentation if necessary.
+When applied on [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) (as [OCR-D workspace processor](https://ocr-d.github.io/cli), cf. [usage](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)), this component also allows processing below the `TextLine` hierarchy level, i.e. on `Word` or `Glyph` level.
 
-...
+For that it uses the soft alignment scores to calculate an optimal **hard alignment** path for characters, and thereby distributes the transduction onto the lower level elements (keeping their coordinates and other meta-data), while changing Word segmentation if necessary (i.e. merging and splitting tokens).
 
 ### Evaluation
 
@@ -111,6 +143,8 @@ There are a number of distance metrics available (all operating on grapheme clus
 ...perplexity measurement...
 
 ## Installation
+
+Besides [OCR-D](https://github.com/OCR-D/core), this builds on Keras/Tensorflow.
 
 Required Ubuntu packages:
 
@@ -148,27 +182,114 @@ This packages has the following user interfaces:
 
 To be used with string arguments and plain-text files.
 
-...
+```sh
+cor-asv-ann-train --help
+Usage: cor-asv-ann-train [OPTIONS] [DATA]...
+
+  Train a correction model.
+
+  Configure a sequence-to-sequence model with the given parameters.
+
+  If given `load_model`, and its configuration matches the current
+  parameters, then load its weights. If given `init_model`, then transfer
+  its mapping and matching layer weights. (Also, if its configuration has 1
+  less hidden layers, then fixate the loaded weights afterwards.) If given
+  `reset_encoder`, re-initialise the encoder weights afterwards.
+
+  Then, regardless, train on the file paths `data` using early stopping. If
+  no `valdata` were given, split off a random fraction of lines for
+  validation. Otherwise, use only those files for validation.
+
+  If the training has been successful, save the model under `save_model`.
+
+Options:
+  -m, --save-model FILE      model file for saving
+  --load-model FILE          model file for loading (incremental/pre-training)
+  --init-model FILE          model file for initialisation (transfer from LM
+                             or shallower model)
+  --reset-encoder            reset encoder weights after load/init
+  -w, --width INTEGER RANGE  number of nodes per hidden layer
+  -d, --depth INTEGER RANGE  number of stacked hidden layers
+  -v, --valdata FILE         file to use for validation (instead of random
+                             split)
+  --help                     Show this message and exit.
+```
 
 ### command line interface `cor-asv-ann-eval`
 
 To be used with string arguments and plain-text files.
 
-...
+```sh
+cor-asv-ann-eval --help
+Usage: cor-asv-ann-eval [OPTIONS] [DATA]...
+
+  Evaluate a correction model.
+
+  Load a sequence-to-sequence model from the given path.
+
+  Then apply on the file paths `data`, comparing predictions (both greedy
+  and beamed) with GT target, and measuring error rates.
+
+Options:
+  -m, --load-model FILE           model file to load
+  -f, --fast                      only decode greedily
+  -r, --rejection FLOAT RANGE     probability of the input characters in all
+                                  hypotheses (set 0 to use raw predictions)
+  -n, --normalization [Levenshtein|NFC|NFKC|historic_latin]
+                                  normalize character sequences before
+                                  alignment/comparison (set Levenshtein for
+                                  none)
+  -l, --gt-level INTEGER RANGE    GT transcription level to use for
+                                  historic_latin normlization (1: strongest,
+                                  3: none)
+  -c, --confusion INTEGER RANGE   show this number of most frequent (non-
+                                  identity) edits (set 0 for none)
+  --help                          Show this message and exit.
+```
+
 
 ### command line interface `cor-asv-ann-repl`
 
 interactive, visualization
 
-...
+```sh
+cor-asv-ann-repl --help
+Usage: cor-asv-ann-repl [OPTIONS]
+
+  Try a correction model interactively.
+
+  Import Sequence2Sequence, instantiate `s2s`, then enter REPL. Also,
+  provide function `transcode_line` for single line correction.
+
+Options:
+  --help  Show this message and exit.
+```
+
+```sh
+cor-asv-ann-repl
+usage example:
+>>> s2s.load_config('model')
+>>> s2s.configure()
+>>> s2s.load_weights('model')
+>>> s2s.evaluate(['filename'])
+
+>>> transcode_line('hello world!')
+now entering REPL...
+
+Python 3.6.7 (default, Oct 22 2018, 11:32:17) 
+[GCC 8.2.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+(InteractiveConsole)
+```
+
 
 ### [OCR-D processor](https://ocr-d.github.io/cli) interface `ocrd-cor-asv-ann-process`
 
-To be used with [PageXML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.github.io/) annotation workflow. 
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.github.io/) annotation workflow. 
 
 Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
 
-Pretrained model files are contained in the [models subrepository](models/README.md). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
+Pretrained model files are contained in the [models subrepository](../cor-asv-ann-models/README.md). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
 
 
 ```json
@@ -237,7 +358,7 @@ Pretrained model files are contained in the [models subrepository](models/README
 
 ### [OCR-D processor](https://ocr-d.github.io/cli) interface `ocrd-cor-asv-ann-evaluate`
 
-To be used with [PageXML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.github.io/) annotation workflow.
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.github.io/) annotation workflow.
 
 Inputs could be anything with a textual annotation (`TextEquiv` on the line level), but at least 2. The first in the list of input file groups will be regarded as reference/GT.
 
@@ -282,7 +403,7 @@ The tool can also aggregate and show the most frequent character confusions.
     }
 ```
 
-...
+There is no output file group for the evaluation tool: it only uses **logging**.
 
 ## Testing
 

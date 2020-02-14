@@ -21,6 +21,7 @@ setup(
     version='0.1.2',
     description='sequence-to-sequence translator for noisy channel error correction',
     long_description=README,
+    long_description_content_type='text/markdown',
     author='Robert Sachunsky',
     author_email='sachunsky@informatik.uni-leipzig.de',
     url='https://github.com/ASVLeipzig/cor-asv-ann',
