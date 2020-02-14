@@ -12,7 +12,7 @@ Contents:
      * [Decoder modes](#decoder-modes)
         * [<em>fast</em>](#fast)
         * [<em>greedy</em>](#greedy)
-        * [<em>default</em>](#default)
+        * [<em>beamed</em>](#default)
      * [Rejection](#rejection)
      * [Underspecification and gap](#underspecification-and-gap)
      * [Training](#training)
@@ -38,7 +38,7 @@ The **attention model** always applies to full lines (in a _local, monotonic_ co
 
 The **network architecture** is as follows: 
 
-![network architecture](./scheme.svg?sanitize=true "topology for depth=1 width=3")
+![network architecture](https://asvleipzig.github.io/cor-asv-ann/scheme.svg?sanitize=true "topology for depth=1 width=3")
 
 0. The input characters are represented as unit vectors (or as a probability distribution in case of uncertainty and ambiguity). These enter a dense projection layer to be picked up by the encoder.
 1. The bottom hidden layer of the encoder is a bi-directional LSTM. 
@@ -117,6 +117,10 @@ Possibilities:
 - scheduled sampling (mixed teacher forcing and decoder feedback)
 - LM transfer (initialization of the decoder weights from a language model of the same topology)
 - shallow transfer (initialization of encoder/decoder weights from a model of lesser depth)
+
+For existing models, cf. [models subrepository](cor-asv-ann-models/README.md).
+
+For tools and datasets, cf. [data processing subrepository](cor-asv-ann-data-processing/README.md).
 
 ### Processing PAGE annotations
 
@@ -286,7 +290,7 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 
 Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
 
-Pretrained model files are contained in the [models subrepository](./cor-asv-ann-models/README.md). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
+Pretrained model files are contained in the [models subrepository](cor-asv-ann-models/README.md). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
 
 
 ```json
