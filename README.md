@@ -118,9 +118,9 @@ Possibilities:
 - LM transfer (initialization of the decoder weights from a language model of the same topology)
 - shallow transfer (initialization of encoder/decoder weights from a model of lesser depth)
 
-For existing models, cf. [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/README.md).
+For existing models, cf. [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/).
 
-For tools and datasets, cf. [data processing subrepository](https://github.com/ASVLeipzig/cor-asv-ann-data-processing/README.md).
+For tools and datasets, cf. [data processing subrepository](https://github.com/ASVLeipzig/cor-asv-ann-data-processing/).
 
 ### Processing PAGE annotations
 
@@ -290,7 +290,7 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 
 Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
 
-Pretrained model files are contained in the [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/README.md). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
+Pretrained model files are contained in the [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
 
 
 ```json
