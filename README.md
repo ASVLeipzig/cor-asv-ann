@@ -23,8 +23,8 @@ Contents:
      * [command line interface cor-asv-ann-train](#command-line-interface-cor-asv-ann-train)
      * [command line interface cor-asv-ann-eval](#command-line-interface-cor-asv-ann-eval)
      * [command line interface cor-asv-ann-repl](#command-line-interface-cor-asv-ann-repl)
-     * [<a href="https://ocr-d.github.io/cli" rel="nofollow">OCR-D processor</a> interface ocrd-cor-asv-ann-process](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)
-     * [<a href="https://ocr-d.github.io/cli" rel="nofollow">OCR-D processor</a> interface ocrd-cor-asv-ann-evaluate](#ocr-d-processor-interface-ocrd-cor-asv-ann-evaluate)
+     * [OCR-D processor interface ocrd-cor-asv-ann-process](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)
+     * [OCR-D processor interface ocrd-cor-asv-ann-evaluate](#ocr-d-processor-interface-ocrd-cor-asv-ann-evaluate)
   * [Testing](#testing)
 
 
@@ -38,7 +38,7 @@ The **attention model** always applies to full lines (in a _local, monotonic_ co
 
 The **network architecture** is as follows: 
 
-![network architecture](./scheme.svg "topology for depth=1 width=3")
+![network architecture](./scheme.svg?sanitize=true "topology for depth=1 width=3")
 
 0. The input characters are represented as unit vectors (or as a probability distribution in case of uncertainty and ambiguity). These enter a dense projection layer to be picked up by the encoder.
 1. The bottom hidden layer of the encoder is a bi-directional LSTM. 
@@ -182,8 +182,7 @@ This packages has the following user interfaces:
 
 To be used with string arguments and plain-text files.
 
-```sh
-cor-asv-ann-train --help
+```
 Usage: cor-asv-ann-train [OPTIONS] [DATA]...
 
   Train a correction model.
@@ -219,8 +218,7 @@ Options:
 
 To be used with string arguments and plain-text files.
 
-```sh
-cor-asv-ann-eval --help
+```
 Usage: cor-asv-ann-eval [OPTIONS] [DATA]...
 
   Evaluate a correction model.
@@ -250,10 +248,9 @@ Options:
 
 ### command line interface `cor-asv-ann-repl`
 
-interactive, visualization
+This tool provides a Python read-eval-print-loop for interactive usage (including some visualization):
 
-```sh
-cor-asv-ann-repl --help
+```
 Usage: cor-asv-ann-repl [OPTIONS]
 
   Try a correction model interactively.
@@ -265,8 +262,8 @@ Options:
   --help  Show this message and exit.
 ```
 
-```sh
-cor-asv-ann-repl
+Here is what you see after starting up the interpreter:
+```
 usage example:
 >>> s2s.load_config('model')
 >>> s2s.configure()
@@ -289,7 +286,7 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 
 Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
 
-Pretrained model files are contained in the [models subrepository](../cor-asv-ann-models/README.md). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
+Pretrained model files are contained in the [models subrepository](./cor-asv-ann-models/README.md). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
 
 
 ```json
