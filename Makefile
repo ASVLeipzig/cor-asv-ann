@@ -8,12 +8,13 @@ help:
 	@echo ""
 	@echo "  Targets"
 	@echo ""
-	@echo "    deps     pip install -r requirements"
-	@echo "    install  pip install . (incl. deps)"
+	@echo "    deps     (install required Python packages)"
+	@echo "    install  (install this Python package)"
+	@echo ""
 
 # END-EVAL
 
-# pip install -r requirements
+# (install required Python packages)
 deps:
 	$(PIP) install -r requirements.txt
 
@@ -25,7 +26,7 @@ deps:
 # 	sudo apt-get install -y \
 # 		...
 
-# pip install . (incl. deps)
+# (install this Python package)
 install: deps
 	$(PIP) install .
 
