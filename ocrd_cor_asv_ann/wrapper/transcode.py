@@ -199,9 +199,9 @@ def _page_get_line_sequences_at(level, pcgts):
     sequences = list()
     word = None # make accessible after loop
     line = None # make accessible after loop
-    regions = pcgts.get_Page().get_TextRegion()
+    regions = pcgts.get_AllRegions()
     if not regions:
-        LOG.warning("Page contains no text regions")
+        LOG.warning("Page contains no regions")
     first_region = True
     for region in regions:
         lines = region.get_TextLine()
@@ -596,7 +596,7 @@ def page_update_higher_textequiv_levels(level, pcgts):
     join all first TextEquiv (by the rules governing the respective level)
     into TextEquiv of the next higher level, replacing them.
     '''
-    regions = pcgts.get_Page().get_TextRegion()
+    regions = pcgts.get_AllRegions()
     if level != 'region':
         for region in regions:
             lines = region.get_TextLine()
