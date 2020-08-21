@@ -167,7 +167,7 @@ def _page_get_lines(pcgts):
     result = dict()
     regions = pcgts.get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
-        LOG.warning("Page contains no regions")
+        LOG.warning("Page contains no text regions")
     for region in regions:
         lines = region.get_TextLine()
         if not lines:
