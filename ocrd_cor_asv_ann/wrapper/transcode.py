@@ -199,7 +199,7 @@ def _page_get_line_sequences_at(level, pcgts):
     sequences = list()
     word = None # make accessible after loop
     line = None # make accessible after loop
-    regions = pcgts.get_AllRegions()
+    regions = pcgts.get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
         LOG.warning("Page contains no regions")
     first_region = True
