@@ -5,7 +5,14 @@ from functools import reduce
 import numpy as np
 
 from ocrd import Processor
-from ocrd_utils import getLogger, concat_padded, xywh_from_points, points_from_xywh, MIMETYPE_PAGE
+from ocrd_utils import (
+    getLogger,
+    assert_file_grp_cardinality,
+    make_file_id,
+    xywh_from_points,
+    points_from_xywh,
+    MIMETYPE_PAGE
+)
 from ocrd_modelfactory import page_from_file
 from ocrd_models.ocrd_page import (
     to_xml,
@@ -88,6 +95,8 @@ class ANNCorrection(Processor):
         
         Produce new output files by serialising the resulting hierarchy.
         """
+        assert_file_grp_cardinality(self.input_file_grp, 1)
+        assert_file_grp_cardinality(self.output_file_grp, 1)
         # Dragging Word/TextLine references along in all lists besides TextEquiv
         # is necessary because the generateDS version of the PAGE-XML model
         # has no references upwards in the hierarchy (from TextEquiv to containing
@@ -158,9 +167,7 @@ class ANNCorrection(Processor):
             page_update_higher_textequiv_levels(level, pcgts)
             
             # write back result to new annotation:
-            file_id = input_file.ID.replace(self.input_file_grp, self.output_file_grp)
-            if file_id == input_file.ID:
-                file_id = concat_padded(self.output_file_grp, n)
+            file_id = make_file_id(input_file, self.output_file_grp)
             file_path = os.path.join(self.output_file_grp, file_id + '.xml')
             self.workspace.add_file(
                 ID=file_id,
