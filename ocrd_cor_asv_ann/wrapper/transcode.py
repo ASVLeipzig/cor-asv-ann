@@ -168,6 +168,7 @@ class ANNCorrection(Processor):
             
             # write back result to new annotation:
             file_id = make_file_id(input_file, self.output_file_grp)
+            pcgts.set_pcGtsId(file_id)
             file_path = os.path.join(self.output_file_grp, file_id + '.xml')
             self.workspace.add_file(
                 ID=file_id,
