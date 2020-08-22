@@ -1,4 +1,4 @@
-ocrd >= 2.13.2
+ocrd >= 2.14.0
 click
 keras == 2.3.*
 numpy

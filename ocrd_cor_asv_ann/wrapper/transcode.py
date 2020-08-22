@@ -16,8 +16,7 @@ from ocrd_utils import (
 from ocrd_modelfactory import page_from_file
 from ocrd_models.ocrd_page import (
     to_xml,
-    WordType, CoordsType, TextEquivType,
-    MetadataItemType, LabelsType, LabelType
+    WordType, CoordsType, TextEquivType
 )
 
 from .config import OCRD_TOOL
@@ -107,21 +106,11 @@ class ANNCorrection(Processor):
             LOG.info("INPUT FILE %i / %s", n, input_file.pageId or input_file.ID)
 
             pcgts = page_from_file(self.workspace.download_file(input_file))
-            page_id = pcgts.pcGtsId or input_file.pageId or input_file.ID # (PageType has no id)
+            page_id = input_file.pageId or input_file.ID # (PageType has no id)
             LOG.info("Correcting text in page '%s' at the %s level", page_id, level)
             
             # annotate processing metadata:
-            metadata = pcgts.get_Metadata() # ensured by from_file()
-            metadata.add_MetadataItem(
-                MetadataItemType(type_="processingStep",
-                                 name=OCRD_TOOL['tools'][TOOL_NAME]['steps'][0],
-                                 value=TOOL_NAME,
-                                 Labels=[LabelsType(
-                                     externalModel="ocrd-tool",
-                                     externalId="parameters",
-                                     Label=[LabelType(type_=name,
-                                                      value=self.parameter[name])
-                                            for name in self.parameter.keys()])]))
+            self.add_metadata(pcgts)
             
             # get textequiv references for all lines:
             # FIXME: conf with TextEquiv alternatives
