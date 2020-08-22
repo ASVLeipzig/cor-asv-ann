@@ -4,7 +4,7 @@ import os
 import math
 
 from ocrd import Processor
-from ocrd_utils import getLogger, concat_padded
+from ocrd_utils import getLogger, concat_padded, assert_file_grp_cardinality
 from ocrd_modelfactory import page_from_file
 
 from .config import OCRD_TOOL
@@ -37,6 +37,8 @@ class EvaluateLines(Processor):
         distances and sequence lengths per file group globally and per file,
         and show each fraction as a CER rate in the log.
         """
+        assert_file_grp_cardinality(self.output_file_grp, 0)
+
         metric = self.parameter['metric']
         confusion = self.parameter['confusion']
         LOG.info('Using evaluation metric "%s".', metric)
@@ -163,7 +165,7 @@ def _page_get_lines(pcgts):
     Return the stored dictionary.
     '''
     result = dict()
-    regions = pcgts.get_Page().get_TextRegion()
+    regions = pcgts.get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
         LOG.warning("Page contains no text regions")
     for region in regions:
