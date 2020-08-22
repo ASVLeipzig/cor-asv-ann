@@ -10,15 +10,19 @@ Installs:
 import codecs
 
 from setuptools import setup, find_packages
+import json
 
 install_requires = open('requirements.txt').read().split('\n')
 
 with codecs.open('README.md', encoding='utf-8') as f:
     README = f.read()
 
+with open('./ocrd-tool.json', 'r') as f:
+    version = json.load(f)['version']
+
 setup(
     name='ocrd_cor_asv_ann',
-    version='0.1.2',
+    version=version,
     description='sequence-to-sequence translator for noisy channel error correction',
     long_description=README,
     long_description_content_type='text/markdown',
