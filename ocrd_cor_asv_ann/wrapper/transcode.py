@@ -22,7 +22,6 @@ from ocrd_models.ocrd_page import (
 from .config import OCRD_TOOL
 from ..lib.seq2seq import Sequence2Sequence, GAP
 
-LOG = getLogger('processor.ANNCorrection')
 TOOL_NAME = 'ocrd-cor-asv-ann-process'
 
 class ANNCorrection(Processor):
@@ -59,7 +58,7 @@ class ANNCorrection(Processor):
             raise Exception('Cannot find model_file in path "%s"' % path)
         
         model_file = getfile(self.parameter['model_file'])
-        self.s2s = Sequence2Sequence(logger=LOG, progbars=True)
+        self.s2s = Sequence2Sequence(logger=getLogger('processor.ANNCorrection'), progbars=True)
         self.s2s.load_config(model_file)
         self.s2s.configure()
         self.s2s.load_weights(model_file)
@@ -102,6 +101,7 @@ class ANNCorrection(Processor):
         # elements, from Glyph/Word/TextLine to Word/TextLine/TextRegion), and
         # its classes are not hashable.
         level = self.parameter['textequiv_level']
+        LOG = getLogger('processor.ANNCorrection')
         for n, input_file in enumerate(self.input_files):
             LOG.info("INPUT FILE %i / %s", n, input_file.pageId or input_file.ID)
 
@@ -185,6 +185,7 @@ def _page_get_line_sequences_at(level, pcgts):
      If `level` is `line`, then the Word reference
      will be None.)
     '''
+    LOG = getLogger('processor.ANNCorrection')
     sequences = list()
     word = None # make accessible after loop
     line = None # make accessible after loop
@@ -450,6 +451,7 @@ def _resegment_sequence(sequence, level):
     At each non-whitespace TextEquiv which contains whitespace, split
     the containing Word at the respective positions.
     '''
+    LOG = getLogger('processor.ANNCorrection')
     for i, (textequiv, word, textline) in enumerate(sequence):
         if textequiv.index == -1:
             if not textequiv.Unicode:

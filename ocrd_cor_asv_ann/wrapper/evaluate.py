@@ -10,7 +10,6 @@ from ocrd_modelfactory import page_from_file
 from .config import OCRD_TOOL
 from ..lib.alignment import Alignment, Edits
 
-LOG = getLogger('processor.EvaluateLines')
 TOOL_NAME = 'ocrd-cor-asv-ann-evaluate'
 
 class EvaluateLines(Processor):
@@ -38,6 +37,8 @@ class EvaluateLines(Processor):
         and show each fraction as a CER rate in the log.
         """
         assert_file_grp_cardinality(self.output_file_grp, 0)
+
+        LOG = getLogger('processor.EvaluateLines')
 
         metric = self.parameter['metric']
         confusion = self.parameter['confusion']
@@ -128,6 +129,7 @@ class EvaluateLines(Processor):
             
     def zip_input_files(self, ifgs):
         """Get a list (for each physical page) of tuples (for each input file group) of METS files."""
+        LOG = getLogger('processor.EvaluateLines')
         ifts = list() # file tuples
         for page_id in self.workspace.mets.physical_pages:
             ifiles = list()
@@ -164,6 +166,7 @@ def _page_get_lines(pcgts):
     
     Return the stored dictionary.
     '''
+    LOG = getLogger('processor.EvaluateLines')
     result = dict()
     regions = pcgts.get_Page().get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
