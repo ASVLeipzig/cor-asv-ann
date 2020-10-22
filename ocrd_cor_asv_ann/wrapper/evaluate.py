@@ -1,10 +1,13 @@
 from __future__ import absolute_import
 
-import os
 import math
 
 from ocrd import Processor
-from ocrd_utils import getLogger, concat_padded, assert_file_grp_cardinality
+from ocrd_utils import (
+    getLogger,
+    assert_file_grp_cardinality,
+    MIMETYPE_PAGE
+)
 from ocrd_modelfactory import page_from_file
 
 from .config import OCRD_TOOL
@@ -17,17 +20,13 @@ class EvaluateLines(Processor):
     def __init__(self, *args, **kwargs):
         kwargs['ocrd_tool'] = OCRD_TOOL['tools'][TOOL_NAME]
         kwargs['version'] = OCRD_TOOL['version']
-        super(EvaluateLines, self).__init__(*args, **kwargs)
-        if not hasattr(self, 'workspace') or not self.workspace:
-            # no parameter/workspace for --dump-json or --version (no processing)
-            return
+        super().__init__(*args, **kwargs)
         
     def process(self):
         """Align textlines of multiple file groups and calculate distances.
         
         Find files in all input file groups of the workspace for the same
-        pageIds (or, as a fallback, the same pageIds at their imageFilename).
-        The first file group serves as reference annotation (ground truth).
+        pageIds. The first file group serves as reference annotation (ground truth).
         
         Open and deserialise PAGE input files, then iterative over the element
         hierarchy down to the TextLine level, looking at each first TextEquiv.
@@ -36,7 +35,7 @@ class EvaluateLines(Processor):
         distances and sequence lengths per file group globally and per file,
         and show each fraction as a CER rate in the log.
         """
-        assert_file_grp_cardinality(self.output_file_grp, 0)
+        #assert_file_grp_cardinality(self.output_file_grp, 0)
 
         LOG = getLogger('processor.EvaluateLines')
 
@@ -131,28 +130,21 @@ class EvaluateLines(Processor):
         """Get a list (for each physical page) of tuples (for each input file group) of METS files."""
         LOG = getLogger('processor.EvaluateLines')
         ifts = list() # file tuples
-        for page_id in self.workspace.mets.physical_pages:
-            ifiles = list()
-            for ifg in ifgs:
-                LOG.debug("adding input file group %s to page %s", ifg, page_id)
-                files = self.workspace.mets.find_files(pageId=page_id, fileGrp=ifg)
-                if not files:
-                    # fall back for missing pageId via Page imageFilename:
-                    all_files = self.workspace.mets.find_files(fileGrp=ifg)
-                    for file_ in all_files:
-                        pcgts = page_from_file(self.workspace.download_file(file_))
-                        image_url = pcgts.get_Page().get_imageFilename()
-                        img_files = self.workspace.mets.find_files(url=image_url)
-                        if img_files and img_files[0].pageId == page_id:
-                            files = [file_]
-                            break
-                if not files:
+        pages = dict() # page->file lists
+        for i, ifg in enumerate(ifgs):
+            for file_ in self.workspace.mets.find_all_files(
+                    pageId=self.page_id, fileGrp=ifg, mimetype=MIMETYPE_PAGE):
+                if not file_.pageId:
+                    continue
+                LOG.debug("adding page %s to input file group %s", file_.pageId, ifg)
+                ift = pages.setdefault(file_.pageId, [None]*len(ifgs))
+                ift[i] = file_
+        for page, ifiles in pages.items():
+            for i, ifg in enumerate(ifgs):
+                if not ifiles[i]:
                     # other fallback options?
                     LOG.error('found no page %s in file group %s',
-                              page_id, ifg)
-                    ifiles.append(None)
-                else:
-                    ifiles.append(files[0])
+                              page, ifg)
             if ifiles[0]:
                 ifts.append(tuple(ifiles))
         return ifts
