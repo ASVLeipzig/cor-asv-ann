@@ -284,9 +284,9 @@ Type "help", "copyright", "credits" or "license" for more information.
 ```
 
 
-### [OCR-D processor](https://ocr-d.github.io/cli) interface `ocrd-cor-asv-ann-process`
+### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-process`
 
-To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.github.io/) annotation workflow. 
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.de/about/) annotation workflow. 
 
 Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
 
@@ -357,9 +357,9 @@ Pretrained model files are contained in the [models subrepository](https://githu
 
 ...
 
-### [OCR-D processor](https://ocr-d.github.io/cli) interface `ocrd-cor-asv-ann-evaluate`
+### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-evaluate`
 
-To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.github.io/) annotation workflow.
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.de/about/) annotation workflow.
 
 Inputs could be anything with a textual annotation (`TextEquiv` on the line level), but at least 2. The first in the list of input file groups will be regarded as reference/GT.
 
@@ -386,6 +386,9 @@ The tool can also aggregate and show the most frequent character confusions.
         "OCR-D-OCR-ANY",
         "OCR-D-COR-ASV"
       ],
+      "output_file_grp": [
+        "OCR-D-EVAL-CER"
+      ],
       "parameters": {
         "metric": {
           "type": "string",
@@ -404,7 +407,7 @@ The tool can also aggregate and show the most frequent character confusions.
     }
 ```
 
-There is no output file group for the evaluation tool: it only uses **logging**.
+The output file group for the evaluation tool will contain a JSON report of the CER distances of each text line per page, and an aggregated JSON report with the totals and the confusion table. It also makes extensive use of logging.
 
 ## Testing
 

@@ -79,6 +79,9 @@
         "OCR-D-OCR-ANY",
         "OCR-D-COR-ASV"
       ],
+      "output_file_grp": [
+        "OCR-D-EVAL-CER"
+      ],
       "parameters": {
         "metric": {
           "type": "string",
