@@ -49,7 +49,7 @@ class EvaluateLines(Processor):
         ifgs = self.input_file_grp.split(",") # input file groups
         if len(ifgs) < 2:
             raise Exception("need multiple input file groups to compare")
-        ifts = self.zip_input_files(ifgs) # input file tuples
+        ifts = self.zip_input_files(mimetype=MIMETYPE_PAGE) # input file tuples
 
         # get separate aligners (1 more than needed), because
         # they are stateful (confusion counts):
@@ -172,33 +172,6 @@ class EvaluateLines(Processor):
             local_filename=file_path,
             mimetype='application/json',
             content=json.dumps(report, indent=2))
-    
-    def zip_input_files(self, ifgs):
-        """Get a list (for each physical page) of tuples (for each input file group) of METS files."""
-        LOG = getLogger('processor.EvaluateLines')
-        pages = dict() # page->file lists
-        # iterating over all files repeatedly may seem inefficient at first sight,
-        # but the unnecessary OcrdFile instantiations for posterior fileGrp filtering
-        # can actually be much more costly than traversing the tree; but this might
-        # depend on the number of pages vs number of fileGrps
-        for i, ifg in enumerate(ifgs):
-            for file_ in self.workspace.mets.find_all_files(
-                    pageId=self.page_id, fileGrp=ifg, mimetype=MIMETYPE_PAGE):
-                if not file_.pageId:
-                    continue
-                LOG.debug("adding page %s to input file group %s", file_.pageId, ifg)
-                ift = pages.setdefault(file_.pageId, [None]*len(ifgs))
-                ift[i] = file_
-        ifts = list() # file tuples
-        for page, ifiles in pages.items():
-            for i, ifg in enumerate(ifgs):
-                if not ifiles[i]:
-                    # other fallback options?
-                    LOG.error('found no page %s in file group %s',
-                              page, ifg)
-            if ifiles[0]:
-                ifts.append(tuple(ifiles))
-        return ifts
 
 def _page_get_lines(pcgts):
     '''Get all TextLines in the page.
