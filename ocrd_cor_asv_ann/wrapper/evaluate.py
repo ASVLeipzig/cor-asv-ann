@@ -121,6 +121,7 @@ class EvaluateLines(Processor):
                          math.sqrt(file_edits[i].varia),
                          input_file.pageId, ifgs[0], ifgs[i])
                 pair = ifgs[0] + ',' + ifgs[i]
+                report[pair] = {}
                 report[pair]['length'] = file_edits[i].length
                 report[pair]['distance-mean'] = file_edits[i].mean
                 report[pair]['distance-varia'] = file_edits[i].varia
