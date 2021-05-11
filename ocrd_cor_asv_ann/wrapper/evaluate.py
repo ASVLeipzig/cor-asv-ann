@@ -95,13 +95,13 @@ class EvaluateLines(Processor):
                     if 0.2 * (gt_len + ocr_len) < math.fabs(gt_len - ocr_len) > 5:
                         LOG.warning('line "%s" in file "%s" deviates significantly in length (%d vs %d)',
                                     line_id, input_file.ID, gt_len, ocr_len)
-                    if metric == 'Levenshtein':
+                    if metric == 'Levenshtein-fast':
                         # not exact (but fast): codepoints
                         dist = self.aligners[i].get_levenshtein_distance(ocr_line, gt_line)
                     else:
                         # exact (but slow): grapheme clusters
                         dist = self.aligners[i].get_adjusted_distance(ocr_line, gt_line,
-                                                                      # NFC / NFKC / historic_latin
+                                                                      # Levenshtein / NFC / NFKC / historic_latin
                                                                       normalization=metric)
                     # align and accumulate edit counts for lines:
                     file_edits[i].add(dist)

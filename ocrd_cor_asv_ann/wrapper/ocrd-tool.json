@@ -85,9 +85,9 @@
       "parameters": {
         "metric": {
           "type": "string",
-          "enum": ["Levenshtein", "NFC", "NFKC", "historic_latin"],
+          "enum": ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC", "historic_latin"],
           "default": "Levenshtein",
-          "description": "Distance metric to calculate and aggregate: historic_latin for GT level 1, NFKC for GT level 2 (except ſ-s), Levenshtein for GT level 3"
+          "description": "Distance metric to calculate and aggregate: `historic_latin` for GT level 1, `NFKC` for GT level 2 (except `ſ-s`), `Levenshtein` for GT level 3 (or `Levenshtein-fast` for faster alignment but using maximum sequence length instead of path length as CER denominator)."
         },
         "confusion": {
           "type": "number",
