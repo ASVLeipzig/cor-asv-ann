@@ -278,6 +278,9 @@ class Alignment():
         """Align strings and calculate raw unweighted edit distance between its codepoints."""
         import editdistance
         dist = editdistance.eval(source_text, target_text)
+        # not quite correct to use the largest sequence length:
+        # this underestimates the alignment path length (which
+        # we cannot get from the library)
         length = max(len(target_text), len(source_text))
         return dist/length if length else 0
     
@@ -382,21 +385,15 @@ class Alignment():
         self.set_seqs(normalize(source_text), normalize(target_text))
         alignment = self.get_best_alignment()
         
-        target_length = 0
-        source_length = 0
         dist = 0.0
         for source_sym, target_sym in alignment:
             #self.logger.debug('"%s"/"%s"', str(source_sym), str(target_sym))
-            if target_sym != self.gap_element:
-                target_length += 1
-            if source_sym != self.gap_element:
-                source_length += 1
             if source_sym == target_sym or equivalent(source_sym, target_sym):
                 pass
             else:
                 dist += 1.0
         # length = len(alignment) # normalized rate
-        length = max(target_length, source_length)
+        length = len(alignment)
             
         # FIXME: determine WER as well
         # idea: assign all non-spaces to previous position, leaving gap
