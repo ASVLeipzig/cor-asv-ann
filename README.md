@@ -21,8 +21,9 @@ Contents:
   * [Installation](#installation)
   * [Usage](#usage)
      * [command line interface cor-asv-ann-train](#command-line-interface-cor-asv-ann-train)
-     * [command line interface cor-asv-ann-eval](#command-line-interface-cor-asv-ann-eval)
      * [command line interface cor-asv-ann-repl](#command-line-interface-cor-asv-ann-repl)
+     * [command line interface cor-asv-ann-eval](#command-line-interface-cor-asv-ann-eval)
+     * [command line interface cor-asv-ann-compare](#command-line-interface-cor-asv-ann-compare)
      * [OCR-D processor interface ocrd-cor-asv-ann-process](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)
      * [OCR-D processor interface ocrd-cor-asv-ann-evaluate](#ocr-d-processor-interface-ocrd-cor-asv-ann-evaluate)
   * [Testing](#testing)
@@ -134,9 +135,11 @@ Text lines can be compared (by aligning and computing a distance under some metr
 
 Distances are accumulated (as micro-averages) as character error rate (CER) mean and stddev, but only on the character level.
 
-There are a number of distance metrics available (all operating on grapheme clusters, not mere codepoints):
+There are a number of distance metrics available (all but the first operating on grapheme clusters, not mere codepoints, and using the alignment path length as denominator, not just the maximum string length):
+- `Levenshtein-fast`:  
+  simple unweighted edit distance (fastest, standard; GT level 3; no regard for combining sequences; max-length norm)
 - `Levenshtein`:  
-  simple unweighted edit distance (fastest, standard; GT level 3)
+  simple unweighted edit distance (GT level 3)
 - `NFC`:  
   like `Levenshtein`, but apply Unicode normal form with canonical composition before (i.e. less than GT level 2)
 - `NFKC`:  
@@ -246,6 +249,47 @@ Options:
                                   3: none)
   -c, --confusion INTEGER RANGE   show this number of most frequent (non-
                                   identity) edits (set 0 for none)
+  --help                          Show this message and exit.
+```
+
+### command line interface `cor-asv-ann-compare`
+
+To be used with PAGE-XML or plain-text files (one for GT, one for OCR or COR output).
+
+```
+Usage: cor-asv-ann-compare [OPTIONS] GT_FILE [OCR_FILES]...
+
+  Compare text lines by aligning and computing the textual distance and
+  character error rate.
+
+  This compares 1:n given PAGE-XML or plain text files.
+
+  If `--file-lists` is given and files are plain text, then they will be
+  interpreted as (newline-separated) lists of path names for single-line
+  text files (for Ocropus convention).
+
+  Writes a JSON report file to `--output-file`. (No error aggregation across
+  files in this CLI.)
+
+Options:
+  -o, --output-file FILE          path name of generated report (default:
+                                  stdout)
+
+  -n, --normalization [Levenshtein-fast|Levenshtein|NFC|NFKC|historic_latin]
+                                  normalize character sequences before
+                                  alignment/comparison (set Levenshtein for
+                                  none)
+
+  -l, --gt-level INTEGER RANGE    GT transcription level to use for
+                                  historic_latin normlization (1: strongest,
+                                  3: none)
+
+  -c, --confusion INTEGER RANGE   show this number of most frequent (non-
+                                  identity) edits (set 0 for none)
+
+  -F, --file-lists                interpret files as plain text files with one
+                                  file path per line
+
   --help                          Show this message and exit.
 ```
 
@@ -392,7 +436,7 @@ The tool can also aggregate and show the most frequent character confusions.
       "parameters": {
         "metric": {
           "type": "string",
-          "enum": ["Levenshtein", "NFC", "NFKC", "historic_latin"],
+          "enum": ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC", "historic_latin"],
           "default": "Levenshtein",
           "description": "Distance metric to calculate and aggregate: historic_latin for GT level 1, NFKC for GT level 2 (except ſ-s), Levenshtein for GT level 3"
         },

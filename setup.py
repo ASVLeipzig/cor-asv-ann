@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Installs:
+    - cor-asv-ann-compare
     - cor-asv-ann-train
     - cor-asv-ann-eval
     - cor-asv-ann-repl
@@ -37,6 +38,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'cor-asv-ann-compare=ocrd_cor_asv_ann.scripts.compare:cli',
             'cor-asv-ann-train=ocrd_cor_asv_ann.scripts.train:cli',
             'cor-asv-ann-eval=ocrd_cor_asv_ann.scripts.eval:cli',
             'cor-asv-ann-repl=ocrd_cor_asv_ann.scripts.repl:cli',

@@ -71,7 +71,7 @@ class EvaluateLines(Processor):
                     continue
                 LOG.info("INPUT FILE for %s: %s", ifgs[i], input_file.ID)
                 pcgts = page_from_file(self.workspace.download_file(input_file))
-                file_lines[i] = _page_get_lines(pcgts)
+                file_lines[i] = page_get_lines(pcgts)
             # compare lines with GT:
             report = dict()
             for line_id in file_lines[0].keys():
@@ -173,7 +173,7 @@ class EvaluateLines(Processor):
             mimetype='application/json',
             content=json.dumps(report, indent=2))
 
-def _page_get_lines(pcgts):
+def page_get_lines(pcgts):
     '''Get all TextLines in the page.
     
     Iterate the element hierarchy of the page `pcgts` down
