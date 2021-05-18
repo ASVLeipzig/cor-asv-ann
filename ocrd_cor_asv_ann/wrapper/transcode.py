@@ -30,41 +30,36 @@ class ANNCorrection(Processor):
         kwargs['ocrd_tool'] = OCRD_TOOL['tools'][TOOL_NAME]
         kwargs['version'] = OCRD_TOOL['version']
         super(ANNCorrection, self).__init__(*args, **kwargs)
-        if (not hasattr(self, 'workspace') or not self.workspace or
-            not hasattr(self, 'parameter') or not self.parameter):
-            # no parameter/workspace for --dump-json or --version (no processing)
-            return
-        
-        if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
-            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
+        if hasattr(self, 'output_file_grp') and self.output_file_grp:
+            # processing context
+            self.setup()
 
+    def setup(self):
+        if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
+            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # error
         def canread(path):
             return os.path.isfile(path) and os.access(path, os.R_OK)
         def getfile(path):
             if canread(path):
                 return path
-            dirname = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                os.pardir, os.pardir)
-            if canread(os.path.join(dirname, path)):
-                return os.path.join(dirname, path)
-            dirname = os.path.join(dirname, 'models')
-            if canread(os.path.join(dirname, path)):
-                return os.path.join(dirname, path)
             if 'CORASVANN_DATA' in os.environ:
                 dirname = os.environ['CORASVANN_DATA']
                 if canread(os.path.join(dirname, path)):
                     return os.path.join(dirname, path)
-            raise Exception('Cannot find model_file in path "%s"' % path)
-        
+            resolved = self.resolve_resource(path)
+            if canread(resolved):
+                return resolved
+            raise Exception('Cannot read model_file in path "%s"' % path)
+        self.logger = getLogger('processor.ANNCorrection')
         model_file = getfile(self.parameter['model_file'])
-        self.s2s = Sequence2Sequence(logger=getLogger('processor.ANNCorrection'), progbars=True)
+        self.s2s = Sequence2Sequence(logger=self.logger, progbars=True)
         self.s2s.load_config(model_file)
         self.s2s.configure()
         self.s2s.load_weights(model_file)
         self.s2s.rejection_threshold = self.parameter['rejection_threshold']
         self.s2s.beam_width_in = self.parameter['fixed_beam_width']
         self.s2s.beam_threshold_in = self.parameter['relative_beam_width']
+        self.logger.debug("Loaded model_file '%s'", self.parameter['model_file'])
         
     def process(self):
         """Perform OCR post-correction with encoder-attention-decoder ANN on the workspace.
@@ -101,13 +96,12 @@ class ANNCorrection(Processor):
         # elements, from Glyph/Word/TextLine to Word/TextLine/TextRegion), and
         # its classes are not hashable.
         level = self.parameter['textequiv_level']
-        LOG = getLogger('processor.ANNCorrection')
         for n, input_file in enumerate(self.input_files):
-            LOG.info("INPUT FILE %i / %s", n, input_file.pageId or input_file.ID)
+            self.logger.info("INPUT FILE %i / %s", n, input_file.pageId or input_file.ID)
 
             pcgts = page_from_file(self.workspace.download_file(input_file))
             page_id = input_file.pageId or input_file.ID # (PageType has no id)
-            LOG.info("Correcting text in page '%s' at the %s level", page_id, level)
+            self.logger.info("Correcting text in page '%s' at the %s level", page_id, level)
             
             # annotate processing metadata:
             self.add_metadata(pcgts)
@@ -134,7 +128,7 @@ class ANNCorrection(Processor):
                      input_lines, output_lines, output_probs,
                      output_scores, alignments,
                      textequiv_starts, word_starts, textline_starts):
-                LOG.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
+                self.logger.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
                 
                 # convert soft scores (seen from output) to hard path (seen from input):
                 realignment = _alignment2path(alignment, len(input_line), len(output_line),
@@ -150,7 +144,7 @@ class ANNCorrection(Processor):
                 if level != 'line':
                     _resegment_sequence(new_sequence, level)
                 
-                LOG.info('corrected line with %d elements, ppl: %.3f', len(new_sequence), np.exp(score))
+                self.logger.info('corrected line with %d elements, ppl: %.3f', len(new_sequence), np.exp(score))
             
             # make higher levels consistent again:
             page_update_higher_textequiv_levels(level, pcgts)
