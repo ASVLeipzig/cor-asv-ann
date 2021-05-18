@@ -88,7 +88,7 @@ class ANNCorrection(Processor):
         new content, paying special attention to whitespace:
         
         Distribute edits such that whitespace objects cannot become more than whitespace
-        (or be deleted) and that non-whitespace objects must not start of end with
+        (or be deleted) and that non-whitespace objects must not start or end with
         whitespace (but may contain new whitespace in the middle).
         
         Subsequently, unless processing on the `line` level, make the Word segmentation
@@ -96,7 +96,7 @@ class ANNCorrection(Processor):
         split at whitespace inside non-whitespace tokens.
         
         Finally, make the levels above `textequiv_level` consistent with that
-        textual result (by concatenation joined by whitespace).
+        textual result (via concatenation joined by whitespace).
         
         Produce new output files by serialising the resulting hierarchy.
         """
@@ -124,7 +124,8 @@ class ANNCorrection(Processor):
 
             # concatenate to strings and get dict of start positions to refs:
             input_lines, conf, textequiv_starts, word_starts, textline_starts = (
-                _line_sequences2string_sequences(self.s2s.mapping[0], line_sequences))
+                _line_sequences2string_sequences(self.s2s.mapping[0], line_sequences,
+                                                 charmap=self.parameter['charmap']))
             
             # correct string and get input-output alignment:
             # FIXME: split into self.batch_size chunks
@@ -254,14 +255,19 @@ def _page_get_line_sequences_at(level, pcgts):
     # filter empty lines (containing only newline):
     return [line for line in sequences if len(line) > 1]
 
-def _line_sequences2string_sequences(mapping, line_sequences):
+def _line_sequences2string_sequences(mapping, line_sequences, charmap=None):
     '''Concatenate TextEquiv / Word / TextLine sequences to line strings.
     
     Return a list of line strings, a list of confidence lists,
     a list of dicts from string positions to TextEquiv references,
     a list of dicts from string positions to Word references, and
     a list of dicts from string positions to TextLine references.
+    
+    If `charmap` is not None, apply it as a character translation
+    table on all characters.
     '''
+    if charmap:
+        charmap = str.maketrans(charmap)
     input_lines, conf, textequiv_starts, word_starts, textline_starts = [], [], [], [], []
     for line_sequence in line_sequences:
         i = 0
@@ -274,6 +280,8 @@ def _line_sequences2string_sequences(mapping, line_sequences):
             textequiv_starts[-1][i] = textequiv
             word_starts[-1][i] = word
             textline_starts[-1][i] = textline
+            if charmap:
+                textequiv.Unicode = textequiv.Unicode.translate(charmap)
             j = len(textequiv.Unicode)
             if not textequiv.Unicode:
                 # empty element (OCR rejection):
@@ -380,7 +388,7 @@ def _update_sequence(input_line, output_line, output_prob,
     j_max = len(output_line)
     textequivs.setdefault(i_max, None) # init end of line
     line = next(line for line in textlines.values() if line)
-    last = None
+    last = []
     sequence = []
     for i in textequivs:
         if i in realignment:

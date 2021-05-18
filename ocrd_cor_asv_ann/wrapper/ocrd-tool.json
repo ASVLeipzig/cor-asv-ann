@@ -1,6 +1,6 @@
 {
   "git_url": "https://github.com/ASVLeipzig/cor-asv-ann",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "tools": {
     "ocrd-cor-asv-ann-process": {
       "executable": "ocrd-cor-asv-ann-process",
@@ -35,6 +35,11 @@
           "enum": ["line", "word", "glyph"],
           "default": "glyph",
           "description": "PAGE XML hierarchy level to read/write TextEquiv input/output on"
+        },
+        "charmap": {
+          "type": "object",
+          "default": {},
+          "description": "mapping for input characters before passing to correction; can be used to adapt to character set mismatch between input and model (without relying on underspecification alone)"
         },
         "rejection_threshold": {
           "type": "number",
