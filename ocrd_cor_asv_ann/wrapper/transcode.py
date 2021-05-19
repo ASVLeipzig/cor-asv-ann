@@ -136,11 +136,9 @@ class ANNCorrection(Processor):
             
             # re-align (from alignment scores) and overwrite the textequiv references:
             for (input_line, output_line, output_prob,
-                 score, alignment,
-                 textequivs, words, textlines) in zip(
+                 output_score, alignment, textequivs, words, textlines) in zip(
                      input_lines, output_lines, output_probs,
-                     output_scores, alignments,
-                     textequiv_starts, word_starts, textline_starts):
+                     output_scores, alignments, textequiv_starts, word_starts, textline_starts):
                 self.logger.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
                 
                 # convert soft scores (seen from output) to hard path (seen from input):
@@ -150,14 +148,15 @@ class ANNCorrection(Processor):
                 # overwrite TextEquiv references:
                 new_sequence = _update_sequence(
                     input_line, output_line, output_prob,
-                    score, realignment,
+                    output_score, realignment,
                     textequivs, words, textlines)
                 
                 # update Word segmentation:
                 if level != 'line':
                     _resegment_sequence(new_sequence, level)
                 
-                self.logger.info('corrected line with %d elements, ppl: %.3f', len(new_sequence), np.exp(score))
+                self.logger.info('corrected line with %d elements, ppl: %.3f',
+                                 len(new_sequence), np.exp(output_score))
             
             # make higher levels consistent again:
             page_update_higher_textequiv_levels(level, pcgts)
@@ -199,59 +198,52 @@ def _page_get_line_sequences_at(level, pcgts):
     regions = pcgts.get_Page().get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
         LOG.warning("Page contains no text regions")
-    first_region = True
     for region in regions:
         lines = region.get_TextLine()
         if not lines:
             LOG.warning("Region '%s' contains no text lines", region.id)
-            continue
-        if not first_region:
-            sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
-        first_region = False
-        first_line = True
         for line in lines:
-            if not first_line:
-                sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
             sequences.append([])
-            first_line = False
             if level == 'line':
                 #LOG.debug("Getting text in line '%s'", line.id)
                 textequivs = line.get_TextEquiv()
-                if not textequivs:
+                if textequivs:
+                    sequences[-1].append((textequivs[0], word, line))
+                else:
                     LOG.warning("Line '%s' contains no text results", line.id)
-                    continue
-                sequences[-1].append((textequivs[0], word, line))
-                continue
-            words = line.get_Word()
-            if not words:
-                LOG.warning("Line '%s' contains no word", line.id)
-                continue
-            first_word = True
-            for word in words:
-                if not first_word:
+            else:
+                words = line.get_Word()
+                if not words:
+                    LOG.warning("Line '%s' contains no word", line.id)
+                for word in words:
+                    if level == 'word':
+                        #LOG.debug("Getting text in word '%s'", word.id)
+                        textequivs = word.get_TextEquiv()
+                        if textequivs:
+                            sequences[-1].append((textequivs[0], word, line))
+                        else:
+                            LOG.warning("Word '%s' contains no text results", word.id)
+                            continue # no inter-word
+                    else:
+                        glyphs = word.get_Glyph()
+                        if not glyphs:
+                            LOG.warning("Word '%s' contains no glyphs", word.id)
+                            continue # no inter-word
+                        for glyph in glyphs:
+                            #LOG.debug("Getting text in glyph '%s'", glyph.id)
+                            textequivs = glyph.get_TextEquiv()
+                            if textequivs:
+                                sequences[-1].append((textequivs[0], word, line))
+                            else:
+                                LOG.warning("Glyph '%s' contains no text results", glyph.id)
+                                # treat as gap
+                                textequivs = [TextEquivType(Unicode='', conf=1.0)]
+                                glyph.set_TextEquiv(textequivs)
+                                sequences[-1].append((textequivs[0], word, line))
                     sequences[-1].append((TextEquivType(Unicode=' ', conf=1.0, index=-1), word, line))
-                first_word = False
-                if level == 'word':
-                    #LOG.debug("Getting text in word '%s'", word.id)
-                    textequivs = word.get_TextEquiv()
-                    if not textequivs:
-                        LOG.warning("Word '%s' contains no text results", word.id)
-                        continue
-                    sequences[-1].append((textequivs[0], word, line))
-                    continue
-                glyphs = word.get_Glyph()
-                if not glyphs:
-                    LOG.warning("Word '%s' contains no glyphs", word.id)
-                    continue
-                for glyph in glyphs:
-                    #LOG.debug("Getting text in glyph '%s'", glyph.id)
-                    textequivs = glyph.get_TextEquiv()
-                    if not textequivs:
-                        LOG.warning("Glyph '%s' contains no text results", glyph.id)
-                        continue
-                    sequences[-1].append((textequivs[0], word, line))
-    if sequences:
-        sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
+                if sequences[-1]:
+                    sequences[-1].pop() # no inter-word
+            sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
     # filter empty lines (containing only newline):
     return [line for line in sequences if len(line) > 1]
 
