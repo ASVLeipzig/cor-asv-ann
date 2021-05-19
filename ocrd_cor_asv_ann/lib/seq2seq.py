@@ -760,6 +760,8 @@ class Sequence2Sequence(object):
         perplexity scores, and input-output alignments.
         '''
         assert not fast or greedy, "cannot decode in fast mode with beam search enabled"
+        if not lines:
+            return [], [], [], []
         
         # vectorize:
         encoder_input_data, _, _, _ = self.vectorize_lines(lines, lines, conf)
