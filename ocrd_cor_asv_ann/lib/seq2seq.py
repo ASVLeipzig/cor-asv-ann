@@ -790,6 +790,7 @@ class Sequence2Sequence(object):
                         probs = [1.0] * len(line)
                         score = 0
                         alignment = np.eye(len(line)).tolist()
+                line = line.replace(GAP, '') # remove if rejected (i.e. not corrected despite underspecification)
                 output_lines.append(line)
                 output_probs.append(probs)
                 output_scores.append(score)
