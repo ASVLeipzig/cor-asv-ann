@@ -1381,7 +1381,7 @@ class Sequence2Sequence(object):
                 scores = scores_output[i]
                 #
                 # estimate current alignment target:
-                alignment = states[-1][-1]
+                alignment = states[-1][0]
                 misalignment = 0.0
                 if node.length > 1:
                     prev_alignment = node.alignment

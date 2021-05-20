@@ -336,7 +336,9 @@ def _alignment2path(alignment, i_max, j_max, min_score):
         np.argmax(viterbi_fw[i_max - 1, i_max - j_max - 2:]))
     realignment = {i_max: j_max} # init end of line
     while i >= 0 and j >= 0:
-        realignment[i] = j # (overwrites any previous assignment)
+        #realignment[i] = j # (overwrites any previous assignment)
+        # FIXME i-o is off by 1 (fix in attention_call?)
+        realignment[i] = j + 1 # (overwrites any previous assignment)
         if viterbi_fw[i - 1, j] > viterbi_fw[i, j - 1]:
             if viterbi_fw[i - 1, j] > viterbi_fw[i - 1, j - 1]:
                 i -= 1
@@ -349,8 +351,11 @@ def _alignment2path(alignment, i_max, j_max, min_score):
             j -= 1
             i -= 1
     realignment[0] = 0 # init start of line
+    # LOG = getLogger('processor.ANNCorrection')
     # LOG.debug('realignment: %s', str(realignment))
     # from matplotlib import pyplot
+    # pyplot.imshow(np.array(alignment).T)
+    # pyplot.show()
     # pyplot.imshow(viterbi_fw)
     # pyplot.show()
     return realignment
