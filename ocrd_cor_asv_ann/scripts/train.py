@@ -5,7 +5,9 @@ import click
 
 from ..lib.seq2seq import Sequence2Sequence
 
-@click.command()
+CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
+
+@click.command(context_settings=CONTEXT_SETTINGS)
 @click.option('-m', '--save-model', default="model.h5", help='model file for saving',
               type=click.Path(dir_okay=False, writable=True))
 @click.option('--load-model', help='model file for loading (incremental/pre-training)',

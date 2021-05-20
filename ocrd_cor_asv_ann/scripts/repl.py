@@ -10,7 +10,9 @@ import numpy as np
 
 from ..lib.seq2seq import Sequence2Sequence
 
-@click.command()
+CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
+
+@click.command(context_settings=CONTEXT_SETTINGS)
 def cli():
     """Try a correction model interactively.
     
