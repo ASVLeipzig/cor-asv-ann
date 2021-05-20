@@ -392,6 +392,13 @@ def _update_sequence(input_line, output_line, output_prob,
         if last:
             input_ = input_line[last[0]:i]
             output = output_line[last[1]:j]
+            prob = output_prob[last[1]:j]
+            textequiv = textequivs[last[0]]
+            assert textequiv.Unicode == input_, (
+                'source element "%s" does not match input section "%s" in line "%s"' % (
+                    textequiv.Unicode, input_, line.id))
+            #print("'" + textequiv.Unicode + "' → '" + output + "'" \
+            #      "[" + str(textequiv.conf if textequiv.index != -1 else -1) + " → " + str(prob) + "]")
             # try to distribute whitespace onto whitespace, i.e.
             # if input is Whitespace, move any Non-whitespace parts
             # in output to neighbours;
@@ -399,7 +406,7 @@ def _update_sequence(input_line, output_line, output_prob,
             # if their input is Whitespace too;
             # input:  N|    W    |N   N|     W   |   W|    N    |W
             # output:  |<-N W N->|     |<-W<-N W |    |<-W N W->|
-            if input_ in (" ", "\n"):
+            if textequiv.index == -1:
                 if output and not output.startswith((" ", "\n")) and sequence:
                     while output and not output.startswith((" ", "\n")):
                         sequence[-1][0].Unicode += output[0]
@@ -423,19 +430,13 @@ def _update_sequence(input_line, output_line, output_prob,
                         last[1] += 1
                         output = output[1:]
                     #print('corrected whitespace LHS: ', last, [i, j])
-                if output.endswith((" ", "\n")) and i < i_max and input_line[i] in (" ", "\n"):
+                if output.endswith((" ", "\n")) and i < i_max and textequivs[i].index == -1:
                     while output.endswith((" ", "\n")):
                         j -= 1
                         output = output[:-1]
                     #print('corrected whitespace RHS: ', last, [i, j])
-            textequiv = textequivs[last[0]]
-            assert textequiv.Unicode == input_, (
-                'source element "%s" does not match input section "%s" in line "%s"' % (
-                    textequiv.Unicode, input_, line.id))
-            #print("'" + textequiv.Unicode + "' -> '" + output + "'")
             textequiv.Unicode = output
             #textequiv.conf = np.exp(-score)
-            prob = output_prob[last[1]:j]
             textequiv.conf = np.mean(prob or [1.0])
             word = words[last[0]]
             textline = textlines[last[0]]
@@ -445,6 +446,8 @@ def _update_sequence(input_line, output_line, output_prob,
         'alignment path did not reach top: %d/%d vs %d/%d in line "%s"' % (
             last[0], last[1], i_max, j_max, line.id))
     for i, (textequiv, _, _) in enumerate(sequence):
+        # disallow non-whitespace mapping to -1 (artificial whitespace)
+        # (but allow whitespace to anything and anything to true segments)
         assert not textequiv.Unicode.split() or textequiv.index != -1, (
             'output "%s" will be lost at (whitespace) element %d in line "%s"' % (
                 textequiv.Unicode, i, line.id))
