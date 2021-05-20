@@ -5,7 +5,9 @@ import click
 
 from ..lib.seq2seq import Sequence2Sequence
 
-@click.command()
+CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
+
+@click.command(context_settings=CONTEXT_SETTINGS)
 @click.option('-m', '--load-model', default="model.h5", help='model file to load',
               type=click.Path(dir_okay=False, exists=True))
 # click.File is impossible since we do not now a priori whether
