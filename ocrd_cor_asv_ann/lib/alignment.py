@@ -400,6 +400,12 @@ class Alignment():
         #       collapse gap-gap pairs, 
         
         return dist / length if length else 0
+    
+    @staticmethod
+    def best_alignment(source_text, target_text):
+        aligner = Alignment()
+        aligner.set_seqs(source_text, target_text)
+        return aligner.get_best_alignment()
 
 class Edits():
     length = mean = varia = 0

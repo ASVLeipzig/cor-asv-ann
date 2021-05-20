@@ -33,6 +33,7 @@ from ocrd_models.ocrd_page_generateds import (
 
 from .config import OCRD_TOOL
 from ..lib.seq2seq import Sequence2Sequence, GAP
+from ..lib.alignment import Alignment
 
 TOOL_NAME = 'ocrd-cor-asv-ann-process'
 
@@ -142,8 +143,10 @@ class ANNCorrection(Processor):
                 self.logger.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
                 
                 # convert soft scores (seen from output) to hard path (seen from input):
-                realignment = _alignment2path(alignment, len(input_line), len(output_line),
-                                              1. / self.s2s.voc_size)
+                #realignment = _alignment2path(alignment, len(input_line), len(output_line),
+                #                              1. / self.s2s.voc_size)
+                # create hard path via minimal edit distance:
+                realignment, distance = _alignment_path(input_line, output_line)
                 
                 # overwrite TextEquiv references:
                 new_sequence = _update_sequence(
@@ -155,8 +158,8 @@ class ANNCorrection(Processor):
                 if level != 'line':
                     _resegment_sequence(new_sequence, level)
                 
-                self.logger.info('corrected line with %d elements, ppl: %.3f',
-                                 len(new_sequence), np.exp(output_score))
+                self.logger.info('corrected line with %d elements, ppl: %.3f, CER: %.1f%%',
+                                 len(new_sequence), np.exp(output_score), distance * 100)
             
             # make higher levels consistent again:
             page_update_higher_textequiv_levels(level, pcgts)
@@ -336,9 +339,7 @@ def _alignment2path(alignment, i_max, j_max, min_score):
         np.argmax(viterbi_fw[i_max - 1, i_max - j_max - 2:]))
     realignment = {i_max: j_max} # init end of line
     while i >= 0 and j >= 0:
-        #realignment[i] = j # (overwrites any previous assignment)
-        # FIXME i-o is off by 1 (fix in attention_call?)
-        realignment[i] = j + 1 # (overwrites any previous assignment)
+        realignment[i] = j # (overwrites any previous assignment)
         if viterbi_fw[i - 1, j] > viterbi_fw[i, j - 1]:
             if viterbi_fw[i - 1, j] > viterbi_fw[i - 1, j - 1]:
                 i -= 1
@@ -359,6 +360,31 @@ def _alignment2path(alignment, i_max, j_max, min_score):
     # pyplot.imshow(viterbi_fw)
     # pyplot.show()
     return realignment
+
+def _alignment_path(input_text, output_text):
+    '''Find the minimal distance path through string pair via Smith-Waterman alignment.
+    
+    Return a dictionary mapping input positions to output positions
+    (i.e. a realignment path).
+    '''
+    alignment = Alignment.best_alignment(input_text, output_text)
+    realignment = {0: 0} # init start of line
+    i, j, dist = 0, 0, 0.0
+    for input_sym, output_sym in alignment:
+        if input_sym:
+            i += len(input_sym)
+        if output_sym:
+            j += len(output_sym)
+        if input_sym != output_sym:
+            dist += 1.0
+        realignment[i] = j
+    assert i == len(input_text)
+    assert j == len(output_text)
+    assert len(alignment) > 0
+    dist /= len(alignment) - 1 # ignore newline
+    # LOG = getLogger('processor.ANNCorrection')
+    # LOG.debug('realignment: %s', str(realignment))
+    return realignment, dist
 
 def _update_sequence(input_line, output_line, output_prob,
                      score, realignment,
