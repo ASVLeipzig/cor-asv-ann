@@ -221,17 +221,15 @@ class Alignment():
         
         if self.confusion is not None:
             for pos, pair in enumerate(alignment1):
-                if pos > 0 and self.gap_element in pair and pair[0] != pair[1]:
-                    gap = pair.index(self.gap_element)
-                    non = (gap + 1) % 2
-                    prev_pair = alignment1[pos - 1]
-                    if prev_pair[non] == self.gap_element:
-                        # merge gap/non after non/gap to non/non
-                        self.confusion[prev_pair] -= 1
-                        if gap:
-                            pair = (pair[0], prev_pair[1])
-                        else:
-                            pair = (prev_pair[0], pair[1])
+                # avoid gap in confusion, prefering multi-character entries instead
+                # merge forward (since we know we always end with newline)
+                if self.gap_element in pair:
+                    continue
+                def tplus(a, b):
+                    return tuple(map(lambda x, y: (x or '') + (y or ''), a, b))
+                while pos and self.gap_element in alignment1[pos - 1]:
+                    pos -= 1
+                    pair = tplus(alignment1[pos], pair)
                 count = self.confusion.setdefault(pair, 0)
                 self.confusion[pair] = count + 1
         
