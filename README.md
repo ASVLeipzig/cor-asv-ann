@@ -103,13 +103,17 @@ Decode beamed, selecting the best output candidates of the best history hypothes
 
 During beam search (default decoder mode), whenever the input and output is in good alignment (i.e. the attention model yields an alignment approximately 1 character after their predecessor's alignment on average), it is possible to estimate the current position in the source string. This input character's predicted output score, when smaller than a given (i.e. variable) probability threshold can be clipped to that minimum. This effectively adds a candidate which _rejects_ correction at that position (keeping the input unchanged).
 
-![rejection example](./rejection.png "soft alignment and probabilities, greedy and beamed (red is rejection)")
+![rejection example](./rejection.png "soft alignment and probabilities, greedy and beamed (red is the rejection candidate)")
+
+That probability is called _rejection threshold_ as a runtime parameter. But while 0.0 _will_ disable rejection completely (i.e. the input hypothesis, if at all identifiable, will keep its predicted score), 1.0 will _not_ disable correction completely (because the input hypothesis might not be found if alignment is too bad). 
 
 ### Underspecification and gap
 
 Input characters that have not been seen during training must be well-behaved at inference time: They must be represented by a reserved index, and should behave like **neutral/unknown** characters instead of spoiling HL states and predictions in a longer follow-up context. This is achieved by dedicated leave-one-out training and regularization to optimize for interpolation of all known characters. At runtime, the encoder merely shows a warning of the previously unseen character.
 
 The same device is useful to fill a known **gap** in the input (the only difference being that no warning is shown).
+
+As an additional facility, characters that are known in advance to not fit well with the model can be mapped prior to correction with the `charmap` parameter.
 
 ### Training
 
@@ -127,7 +131,7 @@ For tools and datasets, cf. [data processing subrepository](https://github.com/A
 
 When applied on [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) (as [OCR-D workspace processor](https://ocr-d.github.io/cli), cf. [usage](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)), this component also allows processing below the `TextLine` hierarchy level, i.e. on `Word` or `Glyph` level.
 
-For that it uses the soft alignment scores to calculate an optimal **hard alignment** path for characters, and thereby distributes the transduction onto the lower level elements (keeping their coordinates and other meta-data), while changing Word segmentation if necessary (i.e. merging and splitting tokens).
+For that one needs to distribute the line-level transduction onto the lower level elements (keeping their coordinates and other meta-data), while changing Word segmentation if necessary (i.e. merging and splitting tokens). To calculate an optimal **hard alignment** path for characters, we _could_ use the soft alignment scores – but in practise, the quality of an independent, a-posteriori string alignment (i.e. Needleman-Wunsch algorithm) is better.
 
 ### Evaluation
 
@@ -180,6 +184,8 @@ pip install .
 ```
 
 The module can use CUDA-enabled GPUs (when sufficiently installed), but can also run on CPU only. Models are always interchangable.
+
+> Note: Models and code are still based on Keras 2.3 / Tensorflow 1.15, which are already end-of-life. You might need an extra venv just for this module to avoid conflicts with other packages. Also, Python >= 3.8 and CUDA toolkit >= 11.0 might not work with prebuilt Tensorflow versions (but see [installation](./INSTALL.md) in that case).
 
 ## Usage
 
@@ -240,7 +246,7 @@ Options:
   -f, --fast                      only decode greedily
   -r, --rejection FLOAT RANGE     probability of the input characters in all
                                   hypotheses (set 0 to use raw predictions)
-  -n, --normalization [Levenshtein|NFC|NFKC|historic_latin]
+  -n, --normalization [Levenshtein-fast|Levenshtein|NFC|NFKC|historic_latin]
                                   normalize character sequences before
                                   alignment/comparison (set Levenshtein for
                                   none)
@@ -334,72 +340,93 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 
 Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
 
-Pretrained model files are contained in the [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
+Pretrained model files are contained in the [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, under the path in the environment variable `CORASVANN_DATA` (if given), and in the default paths of the OCR-D resource manager (i.e. you can do `ocrd resmgr download -na ocrd-cor-asv-ann-process https://github.com/ASVLeipzig/cor-asv-ann-models/blob/master/s2s.dta19.Fraktur4.d2.w0512.adam.attention.stateless.variational-dropout.char.pretrained+retrained-conf.h5` and then `ocrd resmgr list-installed -e ocrd-cor-asv-ann-process` tells you that `s2s.dta19.Fraktur4.d2.w0512.adam.attention.stateless.variational-dropout.char.pretrained+retrained-conf.h5` will resolve as `model_file`).
 
 
-```json
-    "ocrd-cor-asv-ann-process": {
-      "executable": "ocrd-cor-asv-ann-process",
-      "categories": [
-        "Text recognition and optimization"
-      ],
-      "steps": [
-        "recognition/post-correction"
-      ],
-      "description": "Improve text annotation by character-level encoder-attention-decoder ANN model",
-      "input_file_grp": [
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY"
-      ],
-      "output_file_grp": [
-        "OCR-D-COR-ASV"
-      ],
-      "parameters": {
-        "model_file": {
-          "type": "string",
-          "format": "uri",
-          "content-type": "application/x-hdf;subtype=bag",
-          "description": "path of h5py weight/config file for model trained with cor-asv-ann-train",
-          "required": true,
-          "cacheable": true
-        },
-        "textequiv_level": {
-          "type": "string",
-          "enum": ["line", "word", "glyph"],
-          "default": "glyph",
-          "description": "PAGE XML hierarchy level to read/write TextEquiv input/output on"
-        },
-        "rejection_threshold": {
-          "type": "number",
-          "format": "float",
-          "default": 0.5,
-          "description": "minimum probability of the candidate corresponding to the input character in each hypothesis during beam search, helps balance precision/recall trade-off; set to 0 to disable rejection (max recall) or 1 to disable correction (max precision)"
-        },
-        "relative_beam_width": {
-          "type": "number",
-          "format": "float",
-          "default": 0.2,
-          "description": "minimum fraction of the best candidate's probability required to enter the beam in each hypothesis; controls the quality/performance trade-off"
-        },
-        "fixed_beam_width": {
-          "type": "number",
-          "format": "integer",
-          "default": 15,
-          "description": "maximum number of candidates allowed to enter the beam in each hypothesis; controls the quality/performance trade-off"
-        },
-        "fast_mode": {
-          "type": "boolean",
-          "default": false,
-          "description": "decode greedy instead of beamed, with batches of parallel lines instead of parallel alternatives; also disables rejection and beam parameters; enable if performance is far more important than quality"
-        }
-      }
-   }
 ```
+Usage: ocrd-cor-asv-ann-process [OPTIONS]
 
-...
+  Improve text annotation by character-level encoder-attention-decoder ANN model
+
+  > Perform OCR post-correction with encoder-attention-decoder ANN on
+  > the workspace.
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the requested `textequiv_level`, making sequences
+  > of TextEquiv objects as lists of lines. Concatenate their string
+  > values, obeying rules of implicit whitespace, and map the string
+  > positions where the objects start.
+
+  > Next, transcode the input lines into output lines in parallel, and
+  > use the retrieved soft alignment scores to calculate hard alignment
+  > paths between input and output string via Viterbi decoding. Then use
+  > those to map back the start positions and overwrite each TextEquiv
+  > with its new content, paying special attention to whitespace:
+
+  > Distribute edits such that whitespace objects cannot become more
+  > than whitespace (or be deleted) and that non-whitespace objects must
+  > not start or end with whitespace (but may contain new whitespace in
+  > the middle).
+
+  > Subsequently, unless processing on the `line` level, make the Word
+  > segmentation consistent with that result again: merge around deleted
+  > whitespace tokens and split at whitespace inside non-whitespace
+  > tokens.
+
+  > Finally, make the levels above `textequiv_level` consistent with
+  > that textual result (via concatenation joined by whitespace).
+
+  > Produce new output files by serialising the resulting hierarchy.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "model_file" [string - REQUIRED]
+    path of h5py weight/config file for model trained with cor-asv-ann-
+    train
+   "textequiv_level" [string - "glyph"]
+    PAGE XML hierarchy level to read/write TextEquiv input/output on
+    Possible values: ["line", "word", "glyph"]
+   "charmap" [object - {}]
+    mapping for input characters before passing to correction; can be
+    used to adapt to character set mismatch between input and model
+    (without relying on underspecification alone)
+   "rejection_threshold" [number - 0.5]
+    minimum probability of the candidate corresponding to the input
+    character in each hypothesis during beam search, helps balance
+    precision/recall trade-off; set to 0 to disable rejection (max
+    recall) or 1 to disable correction (max precision)
+   "relative_beam_width" [number - 0.2]
+    minimum fraction of the best candidate's probability required to
+    enter the beam in each hypothesis; controls the quality/performance
+    trade-off
+   "fixed_beam_width" [number - 15]
+    maximum number of candidates allowed to enter the beam in each
+    hypothesis; controls the quality/performance trade-off
+   "fast_mode" [boolean - false]
+    decode greedy instead of beamed, with batches of parallel lines
+    instead of parallel alternatives; also disables rejection and beam
+    parameters; enable if performance is far more important than quality
+
+```
 
 ### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-evaluate`
 
@@ -411,44 +438,56 @@ There are various evaluation [metrics](#Evaluation) available.
 
 The tool can also aggregate and show the most frequent character confusions.
 
-```json
-    "ocrd-cor-asv-ann-evaluate": {
-      "executable": "ocrd-cor-asv-ann-evaluate",
-      "categories": [
-        "Text recognition and optimization"
-      ],
-      "steps": [
-        "recognition/evaluation"
-      ],
-      "description": "Align different textline annotations and compute distance",
-      "input_file_grp": [
-        "OCR-D-GT-SEG-LINE",
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY",
-        "OCR-D-COR-ASV"
-      ],
-      "output_file_grp": [
-        "OCR-D-EVAL-CER"
-      ],
-      "parameters": {
-        "metric": {
-          "type": "string",
-          "enum": ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC", "historic_latin"],
-          "default": "Levenshtein",
-          "description": "Distance metric to calculate and aggregate: historic_latin for GT level 1, NFKC for GT level 2 (except ſ-s), Levenshtein for GT level 3"
-        },
-        "confusion": {
-          "type": "number",
-          "format": "integer",
-          "minimum": 0,
-          "default": 0,
-          "description": "Count edits and show that number of most frequent confusions (non-identity) in the end."
-        }
-      }
-    }
+```
+Usage: ocrd-cor-asv-ann-evaluate [OPTIONS]
+
+  Align different textline annotations and compute distance
+
+  > Align textlines of multiple file groups and calculate distances.
+
+  > Find files in all input file groups of the workspace for the same
+  > pageIds. The first file group serves as reference annotation (ground
+  > truth).
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the TextLine level, looking at each first
+  > TextEquiv. Align character sequences in all pairs of lines for the
+  > same TextLine IDs, and calculate the distances using the error
+  > metric `metric`. Accumulate distances and sequence lengths per file
+  > group globally and per file, and show each fraction as a CER rate in
+  > the log.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "metric" [string - "Levenshtein-fast"]
+    Distance metric to calculate and aggregate: `historic_latin` for GT
+    level 1, `NFKC` for GT level 2 (except `ſ-s`), `Levenshtein` for GT
+    level 3 (or `Levenshtein-fast` for faster alignment but using
+    maximum sequence length instead of path length as CER denominator).
+    Possible values: ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC",
+    "historic_latin"]
+   "confusion" [number - 0]
+    Count edits and show that number of most frequent confusions (non-
+    identity) in the end.
 ```
 
 The output file group for the evaluation tool will contain a JSON report of the CER distances of each text line per page, and an aggregated JSON report with the totals and the confusion table. It also makes extensive use of logging.
