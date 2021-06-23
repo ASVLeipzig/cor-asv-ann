@@ -19,14 +19,15 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.option('-n', '--normalization', default='historic_latin', type=click.Choice(
     ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC", "historic_latin"]),
               help='normalize character sequences before alignment/comparison (set Levenshtein for none)')
-@click.option('-l', '--gt-level', default=1, type=click.IntRange(1,3),
+@click.option('-l', '--gt-level', default=1, type=click.IntRange(1, 3),
               help='GT transcription level to use for historic_latin normlization (1: strongest, 3: none)')
 @click.option('-c', '--confusion', default=10, type=click.IntRange(min=0),
               help='show this number of most frequent (non-identity) edits (set 0 for none)')
+@click.option('-H', '--histogram', is_flag=True, help='aggregate and compare character histograms')
 @click.option('-F', '--file-lists', is_flag=True, help='interpret files as plain text files with one file path per line')
 @click.argument('gt_file', type=click.Path(dir_okay=False, exists=True))
 @click.argument('ocr_files', type=click.Path(dir_okay=False, exists=True), nargs=-1)
-def cli(output_file, normalization, gt_level, confusion, file_lists, gt_file, ocr_files):
+def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, gt_file, ocr_files):
     """Compare text lines by aligning and computing the textual distance and character error rate.
     
     This compares 1:n given PAGE-XML or plain text files.
@@ -44,8 +45,8 @@ def cli(output_file, normalization, gt_level, confusion, file_lists, gt_file, oc
     LOG.setLevel(logging.INFO)
     
     caligners = [Alignment(logger=LOG, confusion=bool(confusion)) for _ in ocr_files]
-    waligners = [Alignment(logger=LOG, confusion=False) for _ in ocr_files]
-    cedits = [Edits(logger=LOG) for _ in ocr_files]
+    waligners = [Alignment(logger=LOG) for _ in ocr_files]
+    cedits = [Edits(logger=LOG, histogram=bool(histogram)) for _ in ocr_files]
     wedits = [Edits(logger=LOG) for _ in ocr_files]
     LOG.info("processing '%s'", gt_file)
     gt_lines = get_lines(gt_file, file_lists)
@@ -78,10 +79,10 @@ def cli(output_file, normalization, gt_level, confusion, file_lists, gt_file, oc
                 lines.append({line_id: 'missing'})
                 continue
             gt_line = gt_lines[line_id].strip()
-            ocr_line = ocr_lines[line_id].strip()
             gt_len = len(gt_line)
-            ocr_len = len(ocr_line)
             gt_words = gt_line.split()
+            ocr_line = ocr_lines[line_id].strip()
+            ocr_len = len(ocr_line)
             ocr_words = ocr_line.split()
             if 0.2 * (gt_len + ocr_len) < math.fabs(gt_len - ocr_len) > 5:
                 LOG.warning('line "%s" in file "%s" deviates significantly in length (%d vs %d)',
@@ -100,8 +101,8 @@ def cli(output_file, normalization, gt_level, confusion, file_lists, gt_file, oc
                                                            # Levenshtein / NFC / NFKC / historic_latin
                                                            normalization=normalization,
                                                            gtlevel=gt_level)
-            cedits[i].add(cdist)
-            wedits[i].add(wdist)
+            cedits[i].add(cdist, ocr_line, gt_line)
+            wedits[i].add(wdist, ocr_words, gt_words)
             lines.append({line_id: {
                 'char-length': gt_len,
                 'char-error-rate': cdist,
@@ -126,6 +127,11 @@ def cli(output_file, normalization, gt_level, confusion, file_lists, gt_file, oc
             LOG.info("most frequent confusion / %s vs %s: %s",
                      gt_file, ocr_file, conf)
             report[pair]['confusion'] = repr(conf)
+        if histogram:
+            hist = cedits[i].hist()
+            LOG.info("character histograms / %s vs %s: %s",
+                     gt_file, ocr_file, hist)
+            report[pair]['histogram'] = repr(hist)
     if output_file == '-':
         output = sys.stdout
     else:
