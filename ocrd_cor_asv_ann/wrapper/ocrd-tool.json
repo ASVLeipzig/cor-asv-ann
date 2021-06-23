@@ -92,7 +92,13 @@
           "type": "string",
           "enum": ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC", "historic_latin"],
           "default": "Levenshtein-fast",
-          "description": "Distance metric to calculate and aggregate: `historic_latin` for GT level 1, `NFKC` for GT level 2 (except `ſ-s`), `Levenshtein` for GT level 3 (or `Levenshtein-fast` for faster alignment but using maximum sequence length instead of path length as CER denominator)."
+          "description": "Distance metric to calculate and aggregate: `historic_latin` for GT level 1-3, `NFKC` for roughly GT level 2 (but including reduction of `ſ/s` and superscript numerals etc), `Levenshtein` for GT level 3 (or `Levenshtein-fast` for faster alignment but using maximum sequence length instead of path length as CER denominator)."
+        },
+        "gt_level": {
+          "type": "number",
+          "enum": [1, 2, 3],
+          "default": 1,
+          "description": "When `metric=historic_latin`, normalize and equate at this GT transcription level."
         },
         "confusion": {
           "type": "number",
