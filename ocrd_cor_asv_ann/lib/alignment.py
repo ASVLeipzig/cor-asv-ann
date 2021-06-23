@@ -343,13 +343,8 @@ class Alignment():
                 pass
             else:
                 dist += 1.0
-        # length = len(alignment) # normalized rate
         length = len(alignment)
             
-        # FIXME: determine WER as well
-        # idea: assign all non-spaces to previous position, leaving gap
-        #       collapse gap-gap pairs, 
-        
         return dist / length if length else 0
     
     @staticmethod
