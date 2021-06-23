@@ -106,6 +106,11 @@
           "minimum": 0,
           "default": 0,
           "description": "Count edits and show that number of most frequent confusions (non-identity) in the end."
+        },
+        "histogram": {
+          "type": "boolean",
+          "default": false,
+          "description": "Aggregate and show mutual character histograms."
         }
       }
     }

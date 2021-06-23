@@ -45,6 +45,7 @@ class EvaluateLines(Processor):
         metric = self.parameter['metric']
         gtlevel = self.parameter['gt_level']
         confusion = self.parameter['confusion']
+        histogram = self.parameter['histogram']
         LOG.info('Using evaluation metric "%s".', metric)
         
         ifgs = self.input_file_grp.split(",") # input file groups
@@ -55,15 +56,15 @@ class EvaluateLines(Processor):
         # get separate aligners (1 more than needed), because
         # they are stateful (confusion counts):
         self.caligners = [Alignment(logger=LOG, confusion=bool(confusion)) for _ in ifgs]
-        self.waligners = [Alignment(logger=LOG, confusion=False) for _ in ifgs]
+        self.waligners = [Alignment(logger=LOG) for _ in ifgs]
         
         # running edit counts/mean/variance for each file group:
-        cedits = [Edits(logger=LOG) for _ in ifgs]
+        cedits = [Edits(logger=LOG, histogram=histogram) for _ in ifgs]
         wedits = [Edits(logger=LOG) for _ in ifgs]
         # get input files:
         for ift in ifts:
             # running edit counts/mean/variance for each file group for this file:
-            file_cedits = [Edits(logger=LOG) for _ in ifgs]
+            file_cedits = [Edits(logger=LOG, histogram=histogram) for _ in ifgs]
             file_wedits = [Edits(logger=LOG) for _ in ifgs]
             # get input lines:
             file_lines = [{} for _ in ifgs] # line dicts for this file
@@ -93,10 +94,10 @@ class EvaluateLines(Processor):
                         lines.append({line_id: 'missing'})
                         continue
                     gt_line = file_lines[0][line_id]
-                    ocr_line = file_lines[i][line_id]
                     gt_len = len(gt_line)
-                    ocr_len = len(ocr_line)
                     gt_words = gt_line.split()
+                    ocr_line = file_lines[i][line_id]
+                    ocr_len = len(ocr_line)
                     ocr_words = ocr_line.split()
                     if 0.2 * (gt_len + ocr_len) < math.fabs(gt_len - ocr_len) > 5:
                         LOG.warning('line "%s" in file "%s" deviates significantly in length (%d vs %d)',
@@ -116,8 +117,8 @@ class EvaluateLines(Processor):
                                                                         normalization=metric,
                                                                         gtlevel=gtlevel)
                     # align and accumulate edit counts for lines:
-                    file_cedits[i].add(cdist)
-                    file_wedits[i].add(wdist)
+                    file_cedits[i].add(cdist, ocr_line, gt_line)
+                    file_wedits[i].add(wdist, ocr_words, gt_words)
                     # todo: maybe it could be useful to retrieve and store the alignments, too
                     lines.append({line_id: {
                         'char-length': gt_len,
@@ -185,6 +186,14 @@ class EvaluateLines(Processor):
                 LOG.info("most frequent confusion / %s vs %s: %s",
                          ifgs[0], ifgs[i], conf)
                 report[ifgs[0] + ',' + ifgs[i]]['confusion'] = repr(conf)
+        if histogram:
+            for i in range(1, len(ifgs)):
+                if not cedits[i].length:
+                    continue
+                hist = cedits[i].hist()
+                LOG.info("character histograms / %s vs %s: %s",
+                         ifgs[0], ifgs[i], hist)
+                report[ifgs[0] + ',' + ifgs[i]]['histogram'] = repr(hist)
         # write back result to overall report
         file_id = self.output_file_grp
         file_path = os.path.join(self.output_file_grp, file_id + '.json')
