@@ -189,55 +189,113 @@ class Alignment():
         """
         import unicodedata
         def normalize(seq):
+            if isinstance(seq, list):
+                return list(map(normalize, seq))
             if normalization in ['NFC', 'NFKC']:
-                if isinstance(seq, list):
-                    return [unicodedata.normalize(normalization, tok) for tok in seq]
-                else:
-                    return unicodedata.normalize(normalization, seq)
+                return unicodedata.normalize(normalization, seq)
             elif normalization == 'historic_latin':
                 # multi-codepoint equivalences not involving combining characters:
                 equivalences = { # keep only vocalic ligatures...
                     '': 'ſſ',
-                    "\ueba7": 'ſſi',  # MUFI: LATIN SMALL LIGATURE LONG S LONG S I
-                    '': 'ch',
-                    '': 'ck',
-                    '': 'll',
-                    '': 'ſi',
-                    '': 'ſt',
+                    "": 'ſſi',  # MUFI: LATIN SMALL LIGATURE LONG S LONG S I, U+EBA7
+                    '': 'ch', # Latin small letter c ligated with latin small letter h, U+F502
+                    '': 'ck', # Latin small ligature ck, U+EEC4
+                    'ﬅ': 'ſt',
                     'ﬁ': 'fi',
                     'ﬀ': 'ff',
                     'ﬂ': 'fl',
                     'ﬃ': 'ffi',
-                    '': 'ct',
+                    '': 'ſk',
                     '': 'tz',       # MUFI: LATIN SMALL LIGATURE TZ
-                    '\uf532': 'as',  # eMOP: Latin small ligature as
-                    '\uf533': 'is',  # eMOP: Latin small ligature is
-                    '\uf534': 'us',  # eMOP: Latin small ligature us
-                    '\uf535': 'Qu',  # eMOP: Latin ligature capital Q small u
+                    '': 'as',  # eMOP: Latin small ligature as, U+f532
+                    '': 'is',  # eMOP: Latin small ligature is, U+f533
+                    '': 'us',  # eMOP: Latin small ligature us, U+f534
+                    '': 'Qu',  # eMOP: Latin ligature capital Q small u, U+f535
                     'ĳ': 'ij',       # U+0133 LATIN SMALL LIGATURE IJ
-                    '\uE8BF': 'q&',  # MUFI: LATIN SMALL LETTER Q LIGATED WITH FINAL ET  XXX How to replace this correctly?
-                    '\uEBA5': 'ſp',  # MUFI: LATIN SMALL LIGATURE LONG S P
+                    '': 'q&',  # MUFI: LATIN SMALL LETTER Q LIGATED WITH FINAL ET, U+E8BF
+                    '': 'ſp',  # MUFI: LATIN SMALL LIGATURE LONG S P, U+EBA5
                     'ﬆ': 'st',      # U+FB06 LATIN SMALL LIGATURE ST
-                    '\uF50E': 'q́' # U+F50E LATIN SMALL LETTER Q WITH ACUTE ACCENT
+                    'q̈': 'qᷓ', # replace combining diaeresis with flattened a above (abbrev.: quam)
+                    'c̈': 'cᷓ', # (abbrev.: cetera)
+                    'ḡ': 'gᷓ', # U+1E21 -> g + U1DD3 (ang- or gna-)
+                    # use combining r rotunda (U+1DE3, ᷣ) instead of combining ogonek above (U+1DCE, ᷎)
+                    # or combining hook above (U+0309, ̉); adapt to all your combinations
+                    'v̉': 'vᷣ', # combining hook above -> comb. r rotunda, U+1DE3
+                    'v᷎': 'vᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+                    'b᷎': 'bᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+                    'p᷎': 'pᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+                    # exception: d + comb. r rotunda is hardly visible on screen with most fonts, so use eth instead for the d + something
+                    'd̉': 'ð', # d+comb. hook > eth, U+00F0 (CTRL-d on Linux keyboard)
+                    'ꝟ': 'vᷣ', # U+A75F -> v with comb. r rotunda, U+1DE3
+                    'tᷣ': 't᷑', # comb. r above -> combining ur above, U+1DD1 (in Latin passives such as dat᷑ = datur)
+                    # replace font dependent PUA code points with accepted Unicodes
+                    '': 'ſt', # PUA EADA -> ſt
+                    '': 'ſi', # PUA EBA2 -> ſi
+                    '': 'ſl', # PUA EBA3 -> ſl
+                    '': 'ſſ', # PUA EBA6 -> ſſ
+                    '': 'ſſi', # PUA EBA7 -> ſſi
+                    '': 'ſſt', # PUA F4FF -> ſſt
+                    '': 'ſp', # PUA F52C -> ſp
+                    '': 'ct', # PUA EEC5 -> ct
+                    '': 'ft', # PUA EECB -> ft
+                    '': 'tʒ', # PUA EEDC -> tʒ
+                    '': 'm̃', # PUA E5D2 -> m̃
+                    '': 'ñ', # PUA E5DC -> ñ
+                    '': 'p̃', # PUA E665 -> p + ...
+                    '': 'qʒ', # PUA E8BF -> q; (or to qʒ, or to que, as you like)
+                    '': 'aͤ', # PUA E42C -> a + U+0364, combining e above
+                    '': 'oͤ', # PUA E644 -> o + U+0364
+                    '': 'uͤ', # PUA E72B -> u + U+0364
+                    '': 'ů', # PUA E72D -> U+016F
+                    '': 'ß', # PUA EBAC -> ß (check for correct meaning)
+                    '': 'ß', # PUA E8B7 -> ß (proper replacement in some German printings)
+                    #'': 'ſᷣ', # PUA E8B7 -> ſ with combining r rotunda (in some Latin printings)
+                    '': 'ꝰ', # PUA F1A6 -> U+A770, modifier letter us
+                    '': 'm', # PUA F223 -> m
+                    '': '⁊', # PUA F158 -> U+204A (Tironian et)
+                    '': 'ð', # PUA F159 -> eth, U+00F0
+                    '': ':', # PUA F160 -> :
+                    'q': 'qͥ', # PUA F02F -> small letter i above (U+0365)
+                    't': 't᷑', # t + PUA F1CC -> t + combining ur above (U+1DD1)
+                    '': 'll', # PUA F4F9 -> ll
+                    # replace macron with tilde (easy to reach on keyboard and signalling abbreviations)
+                    'ā': 'ã',
+                    'ē': 'ẽ',
+                    'ī': 'ĩ',
+                    'ō': 'õ',
+                    'ū': 'ũ',
+                    'c̄': 'c̃',
+                    'q̄': 'q̃',
+                    'r̄': 'r̃',
+                    '': 'q́' # U+F50E LATIN SMALL LETTER Q WITH ACUTE ACCENT
                 } if gtlevel < 3 else {}
-                equivalences = str.maketrans(equivalences)
-                if isinstance(seq, list):
-                    return [tok.translate(equivalences) for tok in seq]
-                else:
-                    return seq.translate(equivalences)
+                equivtab = dict()
+                for key in list(equivalences):
+                    if len(key) == 1:
+                        equivtab[key] = equivalences.pop(key)
+                equivtab = str.maketrans(equivtab)
+                for key in equivalences:
+                    seq = seq.replace(key, equivalences[key])
+                return seq.translate(equivtab)
             else:
                 return seq
         if normalization == 'historic_latin' and gtlevel == 1:
             equivalences = [
                 # some of these are not even in NFKC:
-                {"ä", "ä", "a\u0364"},
-                {"ö", "ö", "o\u0364"},
-                {"ü", "ü", "u\u0364"},
-                {"Ä", "Ä", "A\u0364"},
-                {"Ö", "Ö", "O\u0364"},
-                {"Ü", "Ü", "U\u0364"},
-                {"s", "ſ"},
-                {"r", "ꝛ"},
+                {"ä", "ä", "a\u0364"}, # a umlaut: precomposed, decomposed, combinine e
+                {"ö", "ö", "o\u0364"}, # o umlaut: precomposed, decomposed, combinine e
+                {"ü", "ü", "u\u0364"}, # u umlaut: precomposed, decomposed, combinine e
+                {"Ä", "Ä", "A\u0364"}, # A umlaut: precomposed, decomposed, combinine e
+                {"Ö", "Ö", "O\u0364"}, # O umlaut: precomposed, decomposed, combinine e
+                {"Ü", "Ü", "U\u0364"}, # U umlaut: precomposed, decomposed, combinine e
+                #{"I", "J"} # most Fraktur fonts have only a single glyph for I and J
+                {"s", "ſ"}, # LATIN SMALL LETTER LONG S, U+017F
+                {"r", "ꝛ"}, # LATIN SMALL LETTER R ROTUNDA, U+A75B
+                {"z", "ʒ"}, # LATIN SMALL LETTER EZH/YOGH, U+0292
+                {"Z", "Ʒ"}, # LATIN CAPITAL LETTER EZH/YOGH, U+01B7
+                {"n", "ƞ"}, # LATIN SMALL LETTER N WITH LONG RIGHT LEG, U+019E
+                {"μ", "µ"}, # Greek vs math mu
+                {"π", "𝛑", "𝜋", "𝝅", "𝝿", "𝞹"}, # Greek vs math pi
                 {"0", "⁰"},
                 {"1", "¹"},
                 {"2", "²"},
@@ -248,11 +306,11 @@ class Alignment():
                 {"7", "⁷"},
                 {"8", "⁸"},
                 {"9", "⁹", "ꝰ"},
-                {"„", "»", "›", "〟"},
-                {"“", "«", "‹", "〞"},
-                {"'", "ʹ", "ʼ", "′", "‘", "’", "‛", "᾽"},
-                {",", "‚"},
-                {"-", "−", "—", "‐", "‑", "‒", "–", "⁃", "﹘", "―", "─"},
+                {"„", "»", "›", "〟"}, # opening double quotes
+                {"“", "«", "‹", "〞"}, # closing double quotes
+                {"'", "ʹ", "ʼ", "′", "‘", "’", "‛", "᾽", "`"}, # single quotes
+                {",", "‚"}, # SINGLE LOW-9 QUOTATION MARK, U+201A
+                {"-", "−", "—", "‐", "‑", "‒", "–", "⁃", "﹘", "―", "─", "⸗"},
                 {"‟", "〃", "”", "″"}, # ditto signs
                 {"~", "∼", "˜", "῀", "⁓"},
                 {"(", "⟨", "⁽"},
@@ -263,6 +321,11 @@ class Alignment():
         else:
             equivalences = []
         def equivalent(x, y):
+            if isinstance(x, list):
+                return len(x) == len(y) and all(
+                    (equivalent(xc, yc) for xc, yc in zip(x, y)))
+            if x == y:
+                return True
             for equivalence in equivalences:
                 if x in equivalence and y in equivalence:
                     return True
