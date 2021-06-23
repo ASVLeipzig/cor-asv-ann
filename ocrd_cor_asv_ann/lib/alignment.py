@@ -357,11 +357,25 @@ class Edits():
     length = mean = varia = 0
     score = 0
     lines = 0
-    def __init__(self, logger=None):
+    hist1 = None
+    hist2 = None
+    def __init__(self, logger=None, histogram=False):
         self.logger = logger or logging.getLogger(__name__)
+        if histogram:
+            self.hist1 = {'': 0}
+            self.hist2 = {'': 0}
+        else:
+            self.hist1 = dict()
+            self.hist2 = dict()
+
+    def hist(self):
+        keys = set(self.hist1.keys()).union(self.hist2.keys())
+        bits = dict([(key, (self.hist1.get(key, 0), self.hist2.get(key, 0)))
+                     for key in sorted(keys)])
+        return bits
     
     # numerically stable parallel/subsample aggregation algorithm by Chan et al. 1979:
-    def update(self, length, mean, varia):
+    def update(self, length, mean, varia, hist1, hist2):
         if length < 1:
             return
         delta = mean - self.mean
@@ -374,9 +388,21 @@ class Edits():
                                     length, self.length,
                                     mean, self.mean,
                                     varia, self.varia)
+        for tok in hist1:
+            self.hist1[tok] = hist1[tok] + self.hist1.setdefault(tok, 0)
+        for tok in hist2:
+            self.hist2[tok] = hist2[tok] + self.hist2.setdefault(tok, 0)
     
-    def add(self, dist):
-        self.update(1, dist, 0)
+    def add(self, dist, seq1, seq2):
+        hist1 = dict()
+        hist2 = dict()
+        if self.hist1:
+            for tok in seq1:
+                hist1[tok] = 1 + hist1.setdefault(tok, 0)
+        if self.hist2:
+            for tok in seq2:
+                hist2[tok] = 1 + hist2.setdefault(tok, 0)
+        self.update(1, dist, 0, hist1, hist2)
     
     def merge(self, edits):
-        self.update(edits.length, edits.mean, edits.varia)
+        self.update(edits.length, edits.mean, edits.varia, edits.hist1, edits.hist2)
