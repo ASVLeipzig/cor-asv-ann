@@ -118,6 +118,8 @@ class Alignment():
                 while pos and self.gap_element in alignment1[pos - 1]:
                     pos -= 1
                     pair = tplus(alignment1[pos], pair)
+                if eq and eq(*pair):
+                    continue
                 count = self.confusion.setdefault(pair, 0)
                 self.confusion[pair] = count + 1
         
@@ -332,7 +334,7 @@ class Alignment():
             return False
 
         self.set_seqs(normalize(source_text), normalize(target_text))
-        alignment = self.get_best_alignment()
+        alignment = self.get_best_alignment(eq=equivalent)
         
         dist = 0.0
         for source_sym, target_sym in alignment:
