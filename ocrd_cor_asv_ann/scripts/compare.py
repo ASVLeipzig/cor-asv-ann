@@ -90,8 +90,9 @@ def cli(output_file, normalization, gt_level, confusion, file_lists, gt_file, oc
                 dist = aligners[i].get_adjusted_distance(ocr_line, gt_line,
                                                          # Levenshtein / NFC / NFKC / historic_latin
                                                          normalization=normalization)
+            _, conf = Alignment.best_alignment(ocr_line, gt_line, True)
             edits[i].add(dist)
-            lines.append({line_id: {'length': gt_len, 'distance': dist}})
+            lines.append({line_id: {'length': gt_len, 'distance': dist, 'edits': repr(conf)}})
         # report results
         LOG.info("%5d lines %.3f±%.3f CER %s vs %s",
                  edits[i].length, edits[i].mean,
@@ -111,7 +112,7 @@ def cli(output_file, normalization, gt_level, confusion, file_lists, gt_file, oc
         output = sys.stdout
     else:
         output = open(output_file, 'w')
-    json.dump(report, output, indent=2)
+    json.dump(report, output, indent=2, ensure_ascii=False)
 
 def get_lines(fname, flist=False):
     with open(fname, 'r') as fd:
