@@ -129,8 +129,12 @@ def get_lines(fname, flist=False):
         if flist:
             # ocropy style (e.g. -F <(ls -1 *.gt.txt) <(ls -1 *.ocr.txt))
             files = lines
-            lines = []
+            lines = dict()
             for fname in files:
                 with open(fname, 'r') as fd:
-                    lines.append(fd.readline())
+                    if fname.endswith('.txt'):
+                        dirname, basename = os.path.split(fname)
+                        parts = basename.split('.')
+                        fname = os.path.join(dirname, parts[0])
+                    lines[fname] = fd.readline()
     return lines
