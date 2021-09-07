@@ -349,7 +349,7 @@ class Alignment():
     
     @staticmethod
     def best_alignment(source_text, target_text, with_confusion=False):
-        aligner = Alignment()
+        aligner = Alignment(confusion=with_confusion)
         aligner.set_seqs(source_text, target_text)
         if with_confusion:
             return aligner.get_best_alignment(), aligner.get_confusion()
