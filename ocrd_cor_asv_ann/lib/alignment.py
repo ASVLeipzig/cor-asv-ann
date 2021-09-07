@@ -8,77 +8,15 @@ class Alignment():
         self.confusion = dict() if confusion else None
         self.gap_element = gap_element
         self.logger = logger or logging.getLogger(__name__)
-        # alignment for windowing...
-        ## python-alignment is impractical with long or heavily deviating sequences (see github issues 9, 10, 11):
-        #import alignment.sequence
-        #alignment.sequence.GAP_ELEMENT = self.gap_element # override default
-        #from alignment.sequence import Sequence, gap_element
-        #from alignment.vocabulary import Vocabulary
-        #from alignment.sequencealigner import SimpleScoring, StrictGlobalSequenceAligner
-        # Levenshtein scoring:
-        #self.scoring = SimpleScoring(2,-1) # match score, mismatch score
-        #self.aligner = StrictGlobalSequenceAligner(scoring,-2) # gap score
-        # Levenshtein-like scoring with 0.1 distance within typical OCR confusion classes (to improve alignment quality; to reduce error introduced by windowing):
-        # class OCRScoring(SimpleScoring):
-        #     def __init__(self):
-        #         super(OCRScoring, self).__init__(0,-1) # match score, mismatch score (Levenshtein-like)
-        #         self.classes = [[u"a", u"ä", u"á", u"â", u"à", u"ã"],
-        #                         [u"o", u"ö", u"ó", u"ô", u"ò", u"õ"],
-        #                         [u"u", u"ü", u"ú", u"û", u"ù", u"ũ"],
-        #                         [u"A", u"Ä", u"Á", u"Â", u"À", u"Ã"],
-        #                         [u"O", u"Ö", u"Ó", u"Ô", u"Ò", u"Õ"],
-        #                         [u"U", u"Ü", u"Ú", u"Û", u"Ù", u"Ũ"],
-        #                         [0, u"ͤ"],
-        #                         [u'"', u"“", u"‘", u"'", u"’", u"”"],
-        #                         [u',', u'‚', u'„'],
-        #                         [u'-', u'‐', u'—', u'–', u'_'],
-        #                         [u'=', u'⸗', u'⹀'],
-        #                         [u'ſ', u'f', u'ß'], #s?
-        #                         [u"c", u"<", u"e"]]
-        #         self.table = {}
-        #         for c in self.classes:
-        #             for i in c:
-        #                 for j in c:
-        #                     if i==j:
-        #                         self.table[(i,j)] = 0.0
-        #                     else:
-        #                         self.table[(i,j)] = 0.1
-        #     def __call__(self, firstElement, secondElement):
-        #         if (firstElement,secondElement) in self.table:
-        #             return self.table[(firstElement,secondElement)]
-        #         else:
-        #             return super(OCRScoring, self).__call__(firstElement, secondElement)
-        #
-        # self.scoring = OCRScoring()
-        # self.aligner = StrictGlobalSequenceAligner(scoring,-1) # gap score
         
-        ## edlib does not work on Unicode (non-ASCII strings)
-        # import edlib
-
         ## difflib is optimised for visual comparisons (Ratcliff-Obershelp), not minimal distance (Levenshtein):
         from difflib import SequenceMatcher
         self.matcher = SequenceMatcher(isjunk=None, autojunk=False)
-        
-        ## edit_distance is impractical with long sequences, even if very similar (GT lines > 1000 characters, see github issue 6)
-        # from edit_distance.code import SequenceMatcher # similar API to difflib.SequenceMatcher
-        # def char_similar(a, b):
-        #     return (a == b or (a,b) in table)
-        # self.matcher = SequenceMatcher(test=char_similar)
         
         self.source_text = []
         self.target_text = []
     
     def set_seqs(self, source_text, target_text):
-        ## code for python_alignment:
-        #vocabulary = Vocabulary() # inefficient, but helps keep search space smaller if independent for each line
-        #self.source_seq = vocabulary.encodeSequence(Sequence(source_text))
-        #self.target_seq = vocabulary.encodeSequence(Sequence(target_text))
-        
-        ## code for edlib:
-        #self.edres = edlib.align(source_text, target_text, mode='NW', task='path',
-        #                         k=max(len(source_text),len(target_text))*2)
-        
-        ## code for difflib/edit_distance:
         self.matcher.set_seqs(source_text, target_text)
         
         self.source_text = source_text
@@ -86,61 +24,11 @@ class Alignment():
         
     
     def is_bad(self):
-        ## code for python_alignment:
-        #score = self.aligner.align(self.source_seq, self.target_seq)
-        #if score < -10 and score < 5-len(source_text):
-        #    return True
-        
-        ## code for edlib:
-        # assert self.edres
-        # if self.edres['editDistance'] < 0:
-        #    return True
-
-        ## code for difflib/edit_distance:
         # self.matcher = difflib_matcher if len(source_text) > 4000 or len(target_text) > 4000 else editdistance_matcher
-        
         # if self.matcher.distance() > 10 and self.matcher.distance() > len(self.source_text)-5:
         return bool(self.matcher.quick_ratio() < 0.5 and len(self.source_text) > 5)
     
-    def get_best_alignment(self):
-        ## code for identity alignment (for GT-only training; faster, no memory overhead)
-        # alignment1 = zip(source_text, target_text)
-        
-        ## code for python_alignment:
-        #score, alignments = self.aligner.align(self.source_seq, self.target_seq, backtrace=True)
-        #alignment1 = vocabulary.decodeSequenceAlignment(alignments[0])
-        #alignment1 = zip(alignment1.first, alignment1.second)
-        #print ('alignment score:', alignment1.score)
-        #print ('alignment rate:', alignment1.percentIdentity())
-        
-        ## code for edlib:
-        # assert self.edres
-        # alignment1 = []
-        # n = ""
-        # source_k = 0
-        # target_k = 0
-        # for c in self.edres['cigar']:
-        #     if c.isdigit():
-        #         n = n + c
-        #     else:
-        #         i = int(n)
-        #         n = ""
-        #         if c in "=X": # identity/substitution
-        #             alignment1.extend(zip(self.source_text[source_k:source_k+i], self.target_text[target_k:target_k+i]))
-        #             source_k += i
-        #             target_k += i
-        #         elif c == "I": # insert into target
-        #             alignment1.extend(zip(self.source_text[source_k:source_k+i], [self.gap_element]*i))
-        #             source_k += i
-        #         elif c == "D": # delete from target
-        #             alignment1.extend(zip([self.gap_element]*i, self.target_text[target_k:target_k+i]))
-        #             target_k += i
-        #         else:
-        #             raise Exception("edlib returned invalid CIGAR opcode", c)
-        # assert source_k == len(self.source_text)
-        # assert target_k == len(self.target_text)
-        
-        ## code for difflib/edit_distance:
+    def get_best_alignment(self, eq=None):
         alignment1 = []
         source_end = len(self.source_text)
         target_end = len(self.target_text)
@@ -230,6 +118,8 @@ class Alignment():
                 while pos and self.gap_element in alignment1[pos - 1]:
                     pos -= 1
                     pair = tplus(alignment1[pos], pair)
+                if eq and eq(*pair):
+                    continue
                 count = self.confusion.setdefault(pair, 0)
                 self.confusion[pair] = count + 1
         
@@ -301,55 +191,113 @@ class Alignment():
         """
         import unicodedata
         def normalize(seq):
+            if isinstance(seq, list):
+                return list(map(normalize, seq))
             if normalization in ['NFC', 'NFKC']:
-                if isinstance(seq, list):
-                    return [unicodedata.normalize(normalization, tok) for tok in seq]
-                else:
-                    return unicodedata.normalize(normalization, seq)
+                return unicodedata.normalize(normalization, seq)
             elif normalization == 'historic_latin':
                 # multi-codepoint equivalences not involving combining characters:
                 equivalences = { # keep only vocalic ligatures...
                     '': 'ſſ',
-                    "\ueba7": 'ſſi',  # MUFI: LATIN SMALL LIGATURE LONG S LONG S I
-                    '': 'ch',
-                    '': 'ck',
-                    '': 'll',
-                    '': 'ſi',
-                    '': 'ſt',
+                    "": 'ſſi',  # MUFI: LATIN SMALL LIGATURE LONG S LONG S I, U+EBA7
+                    '': 'ch', # Latin small letter c ligated with latin small letter h, U+F502
+                    '': 'ck', # Latin small ligature ck, U+EEC4
+                    'ﬅ': 'ſt',
                     'ﬁ': 'fi',
                     'ﬀ': 'ff',
                     'ﬂ': 'fl',
                     'ﬃ': 'ffi',
-                    '': 'ct',
+                    '': 'ſk',
                     '': 'tz',       # MUFI: LATIN SMALL LIGATURE TZ
-                    '\uf532': 'as',  # eMOP: Latin small ligature as
-                    '\uf533': 'is',  # eMOP: Latin small ligature is
-                    '\uf534': 'us',  # eMOP: Latin small ligature us
-                    '\uf535': 'Qu',  # eMOP: Latin ligature capital Q small u
+                    '': 'as',  # eMOP: Latin small ligature as, U+f532
+                    '': 'is',  # eMOP: Latin small ligature is, U+f533
+                    '': 'us',  # eMOP: Latin small ligature us, U+f534
+                    '': 'Qu',  # eMOP: Latin ligature capital Q small u, U+f535
                     'ĳ': 'ij',       # U+0133 LATIN SMALL LIGATURE IJ
-                    '\uE8BF': 'q&',  # MUFI: LATIN SMALL LETTER Q LIGATED WITH FINAL ET  XXX How to replace this correctly?
-                    '\uEBA5': 'ſp',  # MUFI: LATIN SMALL LIGATURE LONG S P
+                    '': 'q&',  # MUFI: LATIN SMALL LETTER Q LIGATED WITH FINAL ET, U+E8BF
+                    '': 'ſp',  # MUFI: LATIN SMALL LIGATURE LONG S P, U+EBA5
                     'ﬆ': 'st',      # U+FB06 LATIN SMALL LIGATURE ST
-                    '\uF50E': 'q́' # U+F50E LATIN SMALL LETTER Q WITH ACUTE ACCENT
+                    'q̈': 'qᷓ', # replace combining diaeresis with flattened a above (abbrev.: quam)
+                    'c̈': 'cᷓ', # (abbrev.: cetera)
+                    'ḡ': 'gᷓ', # U+1E21 -> g + U1DD3 (ang- or gna-)
+                    # use combining r rotunda (U+1DE3, ᷣ) instead of combining ogonek above (U+1DCE, ᷎)
+                    # or combining hook above (U+0309, ̉); adapt to all your combinations
+                    'v̉': 'vᷣ', # combining hook above -> comb. r rotunda, U+1DE3
+                    'v᷎': 'vᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+                    'b᷎': 'bᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+                    'p᷎': 'pᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+                    # exception: d + comb. r rotunda is hardly visible on screen with most fonts, so use eth instead for the d + something
+                    'd̉': 'ð', # d+comb. hook > eth, U+00F0 (CTRL-d on Linux keyboard)
+                    'ꝟ': 'vᷣ', # U+A75F -> v with comb. r rotunda, U+1DE3
+                    'tᷣ': 't᷑', # comb. r above -> combining ur above, U+1DD1 (in Latin passives such as dat᷑ = datur)
+                    # replace font dependent PUA code points with accepted Unicodes
+                    '': 'ſt', # PUA EADA -> ſt
+                    '': 'ſi', # PUA EBA2 -> ſi
+                    '': 'ſl', # PUA EBA3 -> ſl
+                    '': 'ſſ', # PUA EBA6 -> ſſ
+                    '': 'ſſi', # PUA EBA7 -> ſſi
+                    '': 'ſſt', # PUA F4FF -> ſſt
+                    '': 'ſp', # PUA F52C -> ſp
+                    '': 'ct', # PUA EEC5 -> ct
+                    '': 'ft', # PUA EECB -> ft
+                    '': 'tʒ', # PUA EEDC -> tʒ
+                    '': 'm̃', # PUA E5D2 -> m̃
+                    '': 'ñ', # PUA E5DC -> ñ
+                    '': 'p̃', # PUA E665 -> p + ...
+                    '': 'qʒ', # PUA E8BF -> q; (or to qʒ, or to que, as you like)
+                    '': 'aͤ', # PUA E42C -> a + U+0364, combining e above
+                    '': 'oͤ', # PUA E644 -> o + U+0364
+                    '': 'uͤ', # PUA E72B -> u + U+0364
+                    '': 'ů', # PUA E72D -> U+016F
+                    '': 'ß', # PUA EBAC -> ß (check for correct meaning)
+                    '': 'ß', # PUA E8B7 -> ß (proper replacement in some German printings)
+                    #'': 'ſᷣ', # PUA E8B7 -> ſ with combining r rotunda (in some Latin printings)
+                    '': 'ꝰ', # PUA F1A6 -> U+A770, modifier letter us
+                    '': 'm', # PUA F223 -> m
+                    '': '⁊', # PUA F158 -> U+204A (Tironian et)
+                    '': 'ð', # PUA F159 -> eth, U+00F0
+                    '': ':', # PUA F160 -> :
+                    'q': 'qͥ', # PUA F02F -> small letter i above (U+0365)
+                    't': 't᷑', # t + PUA F1CC -> t + combining ur above (U+1DD1)
+                    '': 'll', # PUA F4F9 -> ll
+                    # replace macron with tilde (easy to reach on keyboard and signalling abbreviations)
+                    'ā': 'ã',
+                    'ē': 'ẽ',
+                    'ī': 'ĩ',
+                    'ō': 'õ',
+                    'ū': 'ũ',
+                    'c̄': 'c̃',
+                    'q̄': 'q̃',
+                    'r̄': 'r̃',
+                    '': 'q́' # U+F50E LATIN SMALL LETTER Q WITH ACUTE ACCENT
                 } if gtlevel < 3 else {}
-                equivalences = str.maketrans(equivalences)
-                if isinstance(seq, list):
-                    return [tok.translate(equivalences) for tok in seq]
-                else:
-                    return seq.translate(equivalences)
+                equivtab = dict()
+                for key in list(equivalences):
+                    if len(key) == 1:
+                        equivtab[key] = equivalences.pop(key)
+                equivtab = str.maketrans(equivtab)
+                for key in equivalences:
+                    seq = seq.replace(key, equivalences[key])
+                return seq.translate(equivtab)
             else:
                 return seq
         if normalization == 'historic_latin' and gtlevel == 1:
             equivalences = [
                 # some of these are not even in NFKC:
-                {"ä", "ä", "a\u0364"},
-                {"ö", "ö", "o\u0364"},
-                {"ü", "ü", "u\u0364"},
-                {"Ä", "Ä", "A\u0364"},
-                {"Ö", "Ö", "O\u0364"},
-                {"Ü", "Ü", "U\u0364"},
-                {"s", "ſ"},
-                {"r", "ꝛ"},
+                {"ä", "ä", "a\u0364"}, # a umlaut: precomposed, decomposed, combinine e
+                {"ö", "ö", "o\u0364"}, # o umlaut: precomposed, decomposed, combinine e
+                {"ü", "ü", "u\u0364"}, # u umlaut: precomposed, decomposed, combinine e
+                {"Ä", "Ä", "A\u0364"}, # A umlaut: precomposed, decomposed, combinine e
+                {"Ö", "Ö", "O\u0364"}, # O umlaut: precomposed, decomposed, combinine e
+                {"Ü", "Ü", "U\u0364"}, # U umlaut: precomposed, decomposed, combinine e
+                #{"I", "J"} # most Fraktur fonts have only a single glyph for I and J
+                {"s", "ſ"}, # LATIN SMALL LETTER LONG S, U+017F
+                {"r", "ꝛ"}, # LATIN SMALL LETTER R ROTUNDA, U+A75B
+                {"z", "ʒ"}, # LATIN SMALL LETTER EZH/YOGH, U+0292
+                {"Z", "Ʒ"}, # LATIN CAPITAL LETTER EZH/YOGH, U+01B7
+                {"n", "ƞ"}, # LATIN SMALL LETTER N WITH LONG RIGHT LEG, U+019E
+                {"μ", "µ"}, # Greek vs math mu
+                {"π", "𝛑", "𝜋", "𝝅", "𝝿", "𝞹"}, # Greek vs math pi
                 {"0", "⁰"},
                 {"1", "¹"},
                 {"2", "²"},
@@ -360,11 +308,11 @@ class Alignment():
                 {"7", "⁷"},
                 {"8", "⁸"},
                 {"9", "⁹", "ꝰ"},
-                {"„", "»", "›", "〟"},
-                {"“", "«", "‹", "〞"},
-                {"'", "ʹ", "ʼ", "′", "‘", "’", "‛", "᾽"},
-                {",", "‚"},
-                {"-", "−", "—", "‐", "‑", "‒", "–", "⁃", "﹘", "―", "─"},
+                {"„", "»", "›", "〟"}, # opening double quotes
+                {"“", "«", "‹", "〞"}, # closing double quotes
+                {"'", "ʹ", "ʼ", "′", "‘", "’", "‛", "᾽", "`"}, # single quotes
+                {",", "‚"}, # SINGLE LOW-9 QUOTATION MARK, U+201A
+                {"-", "−", "—", "‐", "‑", "‒", "–", "⁃", "﹘", "―", "─", "⸗"},
                 {"‟", "〃", "”", "″"}, # ditto signs
                 {"~", "∼", "˜", "῀", "⁓"},
                 {"(", "⟨", "⁽"},
@@ -375,13 +323,18 @@ class Alignment():
         else:
             equivalences = []
         def equivalent(x, y):
+            if isinstance(x, list):
+                return len(x) == len(y) and all(
+                    (equivalent(xc, yc) for xc, yc in zip(x, y)))
+            if x == y:
+                return True
             for equivalence in equivalences:
                 if x in equivalence and y in equivalence:
                     return True
             return False
 
         self.set_seqs(normalize(source_text), normalize(target_text))
-        alignment = self.get_best_alignment()
+        alignment = self.get_best_alignment(eq=equivalent)
         
         dist = 0.0
         for source_sym, target_sym in alignment:
@@ -390,13 +343,8 @@ class Alignment():
                 pass
             else:
                 dist += 1.0
-        # length = len(alignment) # normalized rate
         length = len(alignment)
             
-        # FIXME: determine WER as well
-        # idea: assign all non-spaces to previous position, leaving gap
-        #       collapse gap-gap pairs, 
-        
         return dist / length if length else 0
     
     @staticmethod
@@ -411,11 +359,25 @@ class Edits():
     length = mean = varia = 0
     score = 0
     lines = 0
-    def __init__(self, logger=None):
+    hist1 = None
+    hist2 = None
+    def __init__(self, logger=None, histogram=False):
         self.logger = logger or logging.getLogger(__name__)
+        if histogram:
+            self.hist1 = {'': 0}
+            self.hist2 = {'': 0}
+        else:
+            self.hist1 = dict()
+            self.hist2 = dict()
+
+    def hist(self):
+        keys = set(self.hist1.keys()).union(self.hist2.keys())
+        bits = dict([(key, (self.hist1.get(key, 0), self.hist2.get(key, 0)))
+                     for key in sorted(keys)])
+        return bits
     
     # numerically stable parallel/subsample aggregation algorithm by Chan et al. 1979:
-    def update(self, length, mean, varia):
+    def update(self, length, mean, varia, hist1, hist2):
         if length < 1:
             return
         delta = mean - self.mean
@@ -428,9 +390,21 @@ class Edits():
                                     length, self.length,
                                     mean, self.mean,
                                     varia, self.varia)
+        for tok in hist1:
+            self.hist1[tok] = hist1[tok] + self.hist1.setdefault(tok, 0)
+        for tok in hist2:
+            self.hist2[tok] = hist2[tok] + self.hist2.setdefault(tok, 0)
     
-    def add(self, dist):
-        self.update(1, dist, 0)
+    def add(self, dist, seq1, seq2):
+        hist1 = dict()
+        hist2 = dict()
+        if self.hist1:
+            for tok in seq1:
+                hist1[tok] = 1 + hist1.setdefault(tok, 0)
+        if self.hist2:
+            for tok in seq2:
+                hist2[tok] = 1 + hist2.setdefault(tok, 0)
+        self.update(1, dist, 0, hist1, hist2)
     
     def merge(self, edits):
-        self.update(edits.length, edits.mean, edits.varia)
+        self.update(edits.length, edits.mean, edits.varia, edits.hist1, edits.hist2)

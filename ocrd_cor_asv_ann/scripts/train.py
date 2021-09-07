@@ -43,6 +43,9 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata
     
     If the training has been successful, save the model under `save_model`.
     """
+    if not data:
+        raise ValueError("Training needs at least one data file")
+    
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
     logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s',
