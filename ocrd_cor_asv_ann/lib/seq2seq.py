@@ -684,7 +684,7 @@ class Sequence2Sequence(object):
         c_beamed_aligner = Alignment(0, logger=self.logger, confusion=confusion > 0)
         w_beamed_aligner = Alignment(0, logger=self.logger)
         for batch_no, batch in enumerate(self.gen_lines(filenames, False, charmap=charmap)):
-            lines_source, lines_target, lines_sourceconf = batch
+            lines_source, lines_sourceconf, lines_target, lines_filename = batch
             #bar.update(1)
 
             lines_greedy, probs_greedy, scores_greedy, _ = (
@@ -822,7 +822,7 @@ class Sequence2Sequence(object):
     
     # for fit_generator()/predict_generator()/evaluate_generator()/standalone
     # -- looping, but not shuffling
-    def gen_data(self, filenames, split=None, train=False, charmap={}, reset_cb=None):
+    def gen_data(self, filenames, split=None, train=False, unsupervised=False, charmap={}, reset_cb=None):
         '''generate batches of vector data from text file
         
         Open `filenames` in text mode, loop over them producing `batch_size`
@@ -837,7 +837,7 @@ class Sequence2Sequence(object):
         epoch = 0
         if train and self.scheduled_sampling:
             sample_ratio = 0
-        for batch in self.gen_lines(filenames, True, split, train, charmap):
+        for batch in self.gen_lines(filenames, True, split, train, unsupervised, charmap):
             if not batch:
                 epoch += 1
                 yield False # signal end of epoch to autosized fit/evaluate
@@ -856,15 +856,14 @@ class Sequence2Sequence(object):
                     with self.graph.as_default():
                         self._resync_decoder()
             else:
-                source_lines, target_lines, sourceconf_lines = batch
+                lines_source, lines_sourceconf, lines_target, lines_filename = batch
                 if train and self.scheduled_sampling:
                     line_schedules = np.random.uniform(0, 1, self.batch_size)
                 else:
                     line_schedules = None
                 # vectorize:
                 encoder_input_data, decoder_input_data, decoder_output_data, decoder_output_weights = (
-                    self.vectorize_lines(source_lines, target_lines,
-                                         sourceconf_lines))
+                    self.vectorize_lines(lines_source, lines_target, lines_sourceconf))
                 # yield source/target data to keras consumer loop (fit/evaluate)
                 if line_schedules is not None: # and epoch > 1:
                     # calculate greedy/beamed decoder output to yield as as decoder input
@@ -896,7 +895,7 @@ class Sequence2Sequence(object):
                 yield ([encoder_input_data, decoder_input_data],
                        decoder_output_data, decoder_output_weights)
                     
-    def gen_lines(self, filenames, repeat=True, split=None, train=False, charmap={}):
+    def gen_lines(self, filenames, repeat=True, split=None, train=False, unsupervised=False, charmap={}):
         """Generate batches of lines from the given files.
         
         split...
@@ -909,9 +908,10 @@ class Sequence2Sequence(object):
         if charmap:
             charmap = str.maketrans(charmap)
         while True:
-            source_lines = []
-            target_lines = []
-            sourceconf_lines = []
+            lines_source = []
+            lines_sourceconf = []
+            lines_target = []
+            lines_filename = []
             for filename in filenames:
                 with_confidence = filename.endswith('.pkl')
                 with open(filename, 'rb' if with_confidence else 'r') as file:
@@ -937,12 +937,16 @@ class Sequence2Sequence(object):
                                 source_text = ''.join(chunk[0][0] if chunk else '' for chunk in source_conf)
                             # start-of-sequence will be added by vectorisation
                             # end-of-sequence already preserved by pickle format
+                        elif unsupervised and '\t' not in line:
+                            source_text = target_text = line
                         else:
                             source_text, target_text = line.split('\t')
                             # start-of-sequence will be added by vectorisation
                             # add end-of-sequence:
                             source_text = source_text + '\n'
                             # end-of-sequence already preserved by file iterator
+                        if unsupervised:
+                            target_text = source_text
                         if charmap:
                             source_text = source_text.translate(charmap)
                             target_text = target_text.translate(charmap)
@@ -959,30 +963,33 @@ class Sequence2Sequence(object):
                                                       source_text.rstrip(), target_text.rstrip())
                                 continue # avoid training if OCR was too bad
                         
-                        source_lines.append(source_text)
-                        target_lines.append(target_text)
+                        lines_source.append(source_text)
+                        lines_target.append(target_text)
                         if with_confidence:
-                            sourceconf_lines.append(source_conf)
+                            lines_sourceconf.append(source_conf)
+                        lines_filename.append(filename)
 
-                        if len(source_lines) == self.batch_size: # end of batch
-                            yield (source_lines, target_lines,
-                                   sourceconf_lines if with_confidence else None)
-                            source_lines = []
-                            target_lines = []
-                            sourceconf_lines = []
+                        if len(lines_source) == self.batch_size: # end of batch
+                            yield (lines_source, lines_sourceconf if with_confidence else None,
+                                   lines_target, filename)
+                            lines_source = []
+                            lines_sourceconf = []
+                            lines_target = []
+                            lines_filename = []
             epoch += 1
             if repeat:
                 yield False
                 # bury remaining lines (partially filled batch)
             else:
-                if source_lines:
+                if lines_source:
                     # a partially filled batch remains
-                    source_lines.extend((self.batch_size-len(source_lines))*[''])
-                    target_lines.extend((self.batch_size-len(target_lines))*[''])
+                    lines_source.extend((self.batch_size-len(lines_source))*[''])
+                    lines_target.extend((self.batch_size-len(lines_target))*[''])
                     if with_confidence:
-                        sourceconf_lines.extend((self.batch_size-len(sourceconf_lines))*[[]])
-                    yield (source_lines, target_lines,
-                           sourceconf_lines if with_confidence else None)
+                        lines_sourceconf.extend((self.batch_size-len(lines_sourceconf))*[[]])
+                    lines_filename.extend((self.batch_size-len(lines_filename))*[None])
+                    yield (lines_source, lines_sourceconf if with_confidence else None,
+                           lines_target, filename)
                 break
     
     def vectorize_lines(self, encoder_input_sequences, decoder_input_sequences, encoder_conf_sequences=None):
