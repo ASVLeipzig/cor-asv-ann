@@ -593,7 +593,8 @@ class Sequence2Sequence(object):
         Pass the character sequences of lines in `filenames`, paired into
         source and target (and possibly, source confidence values),
         to the loop training model weights with stochastic gradient descent.
-        The generator will open the file, looping over the complete set (epoch)
+        
+        The generator will open each file, looping over the complete set (epoch)
         as long as validation error does not increase in between (early stopping).
         
         Validate on a random fraction of lines automatically separated before,
@@ -645,13 +646,15 @@ class Sequence2Sequence(object):
             self.logger.critical('training failed')
             self.status = 1
     
-    def evaluate(self, filenames, fast=False, normalization='historic_latin', gt_level=1, confusion=10, histogram=True):
+    def evaluate(self, filenames, fast=False, normalization='historic_latin', charmap={}, gt_level=1,
+                 confusion=10, histogram=True):
         '''evaluate model on text files
         
         Pass the character sequence of lines in ``filenames``, paired into
         source and target (and possibly, source confidence values),
         to a loop predicting outputs with decoder feedback and greedy+beam search.
-        The generator will open the file, looping over the complete set once,
+        
+        The generator will open each file, looping over the complete set once,
         printing source/target and predicted lines,
         and the overall calculated character and word error rates of source (OCR)
         and prediction (greedy/beamed) against target (GT).
@@ -660,6 +663,8 @@ class Sequence2Sequence(object):
         in parallel greedily.
         
         For ``normalization`` and ``gt_level``, see ``Alignment.get_adjusted_distance()``.
+        
+        If ``charmap`` is non-empty, use it (as in str.maketrans) before processing.
         
         If ``confusion`` is greater than zero, then aggregate (non-identity) edits
         on the character level, and show this many most-frequent confusions in the end.
@@ -678,36 +683,36 @@ class Sequence2Sequence(object):
         w_greedy_aligner = Alignment(0, logger=self.logger)
         c_beamed_aligner = Alignment(0, logger=self.logger, confusion=confusion > 0)
         w_beamed_aligner = Alignment(0, logger=self.logger)
-        for batch_no, batch in enumerate(self.gen_lines(filenames, False)):
-            source_lines, target_lines, sourceconf_lines = batch
+        for batch_no, batch in enumerate(self.gen_lines(filenames, False, charmap=charmap)):
+            lines_source, lines_target, lines_sourceconf = batch
             #bar.update(1)
 
-            greedy_lines, greedy_probs, greedy_scores, _ = (
-                self.correct_lines(source_lines, sourceconf_lines,
+            lines_greedy, probs_greedy, scores_greedy, _ = (
+                self.correct_lines(lines_source, lines_sourceconf,
                                    fast=fast, greedy=True))
             if fast:
-                beamed_lines, beamed_probs, beamed_scores = (
-                    greedy_lines, greedy_probs, greedy_scores)
+                lines_beamed, probs_beamed, scores_beamed = (
+                    lines_greedy, probs_greedy, scores_greedy)
             else:
-                beamed_lines, beamed_probs, beamed_scores, _ = (
-                    self.correct_lines(source_lines, sourceconf_lines,
+                lines_beamed, probs_beamed, scores_beamed, _ = (
+                    self.correct_lines(lines_source, lines_sourceconf,
                                        fast=False, greedy=False))
-            for j in range(len(source_lines)):
-                if not source_lines[j] or not target_lines[j]:
+            for j in range(len(lines_source)):
+                if not lines_source[j] or not lines_target[j]:
                     continue # from partially filled batch
                 
                 self.logger.info('Source input              : %s',
-                                 source_lines[j].rstrip(u'\n'))
+                                 lines_source[j].rstrip(u'\n'))
                 self.logger.info('Target output             : %s',
-                                 target_lines[j].rstrip(u'\n'))
+                                 lines_target[j].rstrip(u'\n'))
                 self.logger.info('Target prediction (greedy): %s [%.2f]',
-                                 greedy_lines[j].rstrip(u'\n'), greedy_scores[j])
+                                 lines_greedy[j].rstrip(u'\n'), scores_greedy[j])
                 self.logger.info('Target prediction (beamed): %s [%.2f]',
-                                 beamed_lines[j].rstrip(u'\n'), beamed_scores[j])
+                                 lines_beamed[j].rstrip(u'\n'), scores_beamed[j])
                 
                 #metric = get_levenshtein_distance
 
-                c_origin_dist = c_origin_aligner.get_adjusted_distance(source_lines[j], target_lines[j],
+                c_origin_dist = c_origin_aligner.get_adjusted_distance(lines_source[j], lines_target[j],
                                                                        normalization=normalization,
                                                                        gtlevel=gt_level)
                 c_greedy_dist = c_greedy_aligner.get_adjusted_distance(greedy_lines[j], target_lines[j],
@@ -716,30 +721,30 @@ class Sequence2Sequence(object):
                 c_beamed_dist = c_beamed_aligner.get_adjusted_distance(beamed_lines[j], target_lines[j],
                                                                        normalization=normalization,
                                                                        gtlevel=gt_level)
-                c_origin_counts.add(c_origin_dist, source_lines[j], target_lines[j])
-                c_greedy_counts.add(c_greedy_dist, greedy_lines[j], target_lines[j])
-                c_beamed_counts.add(c_beamed_dist, beamed_lines[j], target_lines[j])
+                c_origin_counts.add(c_origin_dist, lines_source[j], lines_target[j])
+                c_greedy_counts.add(c_greedy_dist, lines_greedy[j], lines_target[j])
+                c_beamed_counts.add(c_beamed_dist, lines_beamed[j], lines_target[j])
                 
-                greedy_tokens = greedy_lines[j].split(" ")
-                beamed_tokens = beamed_lines[j].split(" ")
-                source_tokens = source_lines[j].split(" ")
-                target_tokens = target_lines[j].split(" ")
+                tokens_greedy = lines_greedy[j].split(" ")
+                tokens_beamed = lines_beamed[j].split(" ")
+                tokens_source = lines_source[j].split(" ")
+                tokens_target = lines_target[j].split(" ")
                 
-                w_origin_dist = w_origin_aligner.get_adjusted_distance(source_tokens, target_tokens,
+                w_origin_dist = w_origin_aligner.get_adjusted_distance(tokens_source, tokens_target,
                                                                        normalization=normalization,
                                                                        gtlevel=gt_level)
-                w_greedy_dist = w_greedy_aligner.get_adjusted_distance(greedy_tokens, target_tokens,
+                w_greedy_dist = w_greedy_aligner.get_adjusted_distance(tokens_greedy, tokens_target,
                                                                        normalization=normalization,
                                                                        gtlevel=gt_level)
-                w_beamed_dist = w_beamed_aligner.get_adjusted_distance(beamed_tokens, target_tokens,
+                w_beamed_dist = w_beamed_aligner.get_adjusted_distance(tokens_beamed, tokens_target,
                                                                        normalization=normalization,
                                                                        gtlevel=gt_level)
-                w_origin_counts.add(w_origin_dist, source_tokens, target_tokens)
-                w_greedy_counts.add(w_greedy_dist, greedy_tokens, target_tokens)
-                w_beamed_counts.add(w_beamed_dist, beamed_tokens, target_tokens)
+                w_origin_counts.add(w_origin_dist, tokens_source, tokens_target)
+                w_greedy_counts.add(w_greedy_dist, tokens_greedy, tokens_target)
+                w_beamed_counts.add(w_beamed_dist, tokens_beamed, tokens_target)
                 
-            c_greedy_counts.score += sum(greedy_scores)
-            c_beamed_counts.score += sum(beamed_scores)
+            c_greedy_counts.score += sum(scores_greedy)
+            c_beamed_counts.score += sum(scores_beamed)
 
         self.logger.info('finished %d lines', c_origin_counts.length)
         if confusion > 0:
@@ -817,13 +822,13 @@ class Sequence2Sequence(object):
     
     # for fit_generator()/predict_generator()/evaluate_generator()/standalone
     # -- looping, but not shuffling
-    def gen_data(self, filenames, split=None, train=False, reset_cb=None):
+    def gen_data(self, filenames, split=None, train=False, charmap={}, reset_cb=None):
         '''generate batches of vector data from text file
         
         Open `filenames` in text mode, loop over them producing `batch_size`
         lines at a time. Pad lines into the longest line of the batch.
         If stateful, call `reset_cb` at the start of each batch (if given)
-        or resets model directly (otherwise).
+        or reset model directly (otherwise).
         Skip lines at `split` positions (if given), depending on `train`
         (upper vs lower partition).
         Yield vector data batches (for fit_generator/evaluate_generator).
@@ -832,7 +837,7 @@ class Sequence2Sequence(object):
         epoch = 0
         if train and self.scheduled_sampling:
             sample_ratio = 0
-        for batch in self.gen_lines(filenames, True, split, train):
+        for batch in self.gen_lines(filenames, True, split, train, charmap):
             if not batch:
                 epoch += 1
                 yield False # signal end of epoch to autosized fit/evaluate
@@ -891,7 +896,7 @@ class Sequence2Sequence(object):
                 yield ([encoder_input_data, decoder_input_data],
                        decoder_output_data, decoder_output_weights)
                     
-    def gen_lines(self, filenames, repeat=True, split=None, train=False):
+    def gen_lines(self, filenames, repeat=True, split=None, train=False, charmap={}):
         """Generate batches of lines from the given files.
         
         split...
@@ -901,6 +906,8 @@ class Sequence2Sequence(object):
         """
         split_ratio = 0.2
         epoch = 0
+        if charmap:
+            charmap = str.maketrans(charmap)
         while True:
             source_lines = []
             target_lines = []
@@ -936,6 +943,9 @@ class Sequence2Sequence(object):
                             # add end-of-sequence:
                             source_text = source_text + '\n'
                             # end-of-sequence already preserved by file iterator
+                        if charmap:
+                            source_text = source_text.translate(charmap)
+                            target_text = target_text.translate(charmap)
                         source_text = unicodedata.normalize('NFC', source_text)
                         target_text = unicodedata.normalize('NFC', target_text)
 

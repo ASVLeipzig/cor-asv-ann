@@ -26,7 +26,7 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 # or plain text files (mode 'r')
 @click.argument('data', nargs=-1, type=click.Path(dir_okay=False, exists=True))
 def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata, data):
-    """Train a correction model.
+    """Train a correction model on GT files.
     
     Configure a sequence-to-sequence model with the given parameters.
     

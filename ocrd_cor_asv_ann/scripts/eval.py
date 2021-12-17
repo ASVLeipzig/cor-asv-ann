@@ -19,6 +19,8 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.option('-n', '--normalization', default='historic_latin', type=click.Choice(
     ["Levenshtein", "NFC", "NFKC", "historic_latin"]),
               help='normalize character sequences before alignment/comparison (set Levenshtein for none)')
+@click.option('-C', '--charmap', default={}, help='mapping for input characters before passing to correction; ' \
+              'can be used to adapt to character set mismatch between input and model (without relying on underspecification alone)')
 @click.option('-l', '--gt-level', default=1, type=click.IntRange(1, 3),
               help='GT transcription level to use for historic_latin normlization (1: strongest, 3: none)')
 @click.option('-c', '--confusion', default=10, type=click.IntRange(min=0),
@@ -26,8 +28,8 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.option('-H', '--histogram', is_flag=True,
               help='aggregate and compare character histograms')
 @click.argument('data', nargs=-1, type=click.Path(dir_okay=False, exists=True))
-def cli(load_model, fast, rejection, normalization, gt_level, confusion, histogram, data):
-    """Evaluate a correction model.
+def cli(load_model, fast, rejection, normalization, charmap, gt_level, confusion, histogram, data):
+    """Evaluate a correction model on GT files.
     
     Load a sequence-to-sequence model from the given path.
     
@@ -47,4 +49,4 @@ def cli(load_model, fast, rejection, normalization, gt_level, confusion, histogr
     s2s.load_weights(load_model)
     s2s.rejection_threshold = rejection
     
-    s2s.evaluate(data, fast, normalization, gt_level, confusion, histogram)
+    s2s.evaluate(data, fast, normalization, charmap, gt_level, confusion, histogram)
