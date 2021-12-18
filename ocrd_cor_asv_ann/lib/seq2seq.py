@@ -764,6 +764,32 @@ class Sequence2Sequence(object):
         self.logger.info("WER greedy: %.3f±%.3f", w_greedy_counts.mean, math.sqrt(w_greedy_counts.varia))
         self.logger.info("WER beamed: %.3f±%.3f", w_beamed_counts.mean, math.sqrt(w_beamed_counts.varia))
         
+    def predict(self, filenames, fast=False, greedy=False, charmap={}):
+        '''apply model on text files
+        
+        Pass the character sequence of lines in ``filenames``, paired into
+        source and target (and possibly, source confidence values),
+        to a loop predicting outputs with decoder feedback and greedy/beam search.
+        
+        The generator will open each file, looping over the complete set once,
+        yielding predicted lines (along with their filename).
+        
+        If ``fast``, then skip beam search for single lines, and process all batches
+        in parallel greedily.
+        
+        If ``charmap`` is non-empty, use it (as in str.maketrans) before processing.
+        '''
+        assert self.status == 2
+        for batch_no, batch in enumerate(self.gen_lines(filenames,
+                                                        repeat=False,
+                                                        unsupervised=True,
+                                                        charmap=charmap)):
+            lines_source, lines_sourceconf, _, lines_filename = batch
+            lines_result, probs_result, scores_result, _ = (
+                self.correct_lines(lines_source, lines_sourceconf,
+                                   fast=fast, greedy=greedy))
+            yield (lines_filename, lines_result, scores_result)
+
     def correct_lines(self, lines, conf=None, fast=True, greedy=True):
         '''apply correction model on text strings
         
@@ -971,7 +997,7 @@ class Sequence2Sequence(object):
 
                         if len(lines_source) == self.batch_size: # end of batch
                             yield (lines_source, lines_sourceconf if with_confidence else None,
-                                   lines_target, filename)
+                                   lines_target, lines_filename)
                             lines_source = []
                             lines_sourceconf = []
                             lines_target = []
@@ -989,7 +1015,7 @@ class Sequence2Sequence(object):
                         lines_sourceconf.extend((self.batch_size-len(lines_sourceconf))*[[]])
                     lines_filename.extend((self.batch_size-len(lines_filename))*[None])
                     yield (lines_source, lines_sourceconf if with_confidence else None,
-                           lines_target, filename)
+                           lines_target, lines_filename)
                 break
     
     def vectorize_lines(self, encoder_input_sequences, decoder_input_sequences, encoder_conf_sequences=None):

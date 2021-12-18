@@ -37,7 +37,15 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata
     weights afterwards.)
     If given `reset_encoder`, re-initialise the encoder weights afterwards.
     
-    Then, regardless, train on the file paths `data` using early stopping.
+    Then, regardless, train on the `data` files using early stopping.
+    
+    \b
+    (Supported file formats are:
+     - * (tab-separated values), with source-target lines
+     - *.pkl (pickle dumps), with source-target lines, where source is either
+       - a single string, or
+       - a sequence of character-probability tuples.)
+    
     If no `valdata` were given, split off a random fraction of lines for
     validation. Otherwise, use only those files for validation.
     

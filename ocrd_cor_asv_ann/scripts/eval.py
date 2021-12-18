@@ -36,6 +36,13 @@ def cli(load_model, fast, rejection, normalization, charmap, gt_level, confusion
     Then apply on the file paths `data`, comparing predictions
     (both greedy and beamed) with GT target, and measuring
     error rates.
+    
+    \b
+    (Supported file formats are:
+     - * (tab-separated values), with source-target lines
+     - *.pkl (pickle dumps), with source-target lines, where source is either
+       - a single string, or
+       - a sequence of character-probability tuples.)
     """
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'

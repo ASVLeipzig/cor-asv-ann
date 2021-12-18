@@ -22,6 +22,7 @@ Contents:
   * [Usage](#usage)
      * [command line interface cor-asv-ann-train](#command-line-interface-cor-asv-ann-train)
      * [command line interface cor-asv-ann-repl](#command-line-interface-cor-asv-ann-repl)
+     * [command line interface cor-asv-ann-proc](#command-line-interface-cor-asv-ann-proc)
      * [command line interface cor-asv-ann-eval](#command-line-interface-cor-asv-ann-eval)
      * [command line interface cor-asv-ann-compare](#command-line-interface-cor-asv-ann-compare)
      * [OCR-D processor interface ocrd-cor-asv-ann-process](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)
@@ -159,29 +160,29 @@ Besides [OCR-D](https://github.com/OCR-D/core), this builds on Keras/Tensorflow.
 
 Required Ubuntu packages:
 
-* Python (``python`` or ``python3``)
-* pip (``python-pip`` or ``python3-pip``)
-* venv (``python-venv`` or ``python3-venv``)
+* Python (`python` or `python3`)
+* pip (`python-pip` or `python3-pip`)
+* venv (`python-venv` or `python3-venv`)
 
 Create and activate a virtual environment as usual.
 
 To install Python dependencies:
-```shell
-make deps
-```
+
+    make deps
+
 Which is the equivalent of:
-```shell
-pip install -r requirements.txt
-```
+
+    pip install -r requirements.txt
+
 
 To install this module, then do:
-```shell
-make install
-```
+
+    make install
+
 Which is the equivalent of:
-```shell
-pip install .
-```
+
+    pip install .
+
 
 The module can use CUDA-enabled GPUs (when sufficiently installed), but can also run on CPU only. Models are always interchangable.
 
@@ -193,12 +194,13 @@ This packages has the following user interfaces:
 
 ### command line interface `cor-asv-ann-train`
 
-To be used with string arguments and plain-text files.
+To be used with TSV files (tab-delimited source-target lines),
+or pickle dump files (source-target tuple lists).
 
 ```
 Usage: cor-asv-ann-train [OPTIONS] [DATA]...
 
-  Train a correction model.
+  Train a correction model on GT files.
 
   Configure a sequence-to-sequence model with the given parameters.
 
@@ -208,8 +210,15 @@ Usage: cor-asv-ann-train [OPTIONS] [DATA]...
   less hidden layers, then fixate the loaded weights afterwards.) If given
   `reset_encoder`, re-initialise the encoder weights afterwards.
 
-  Then, regardless, train on the file paths `data` using early stopping. If
-  no `valdata` were given, split off a random fraction of lines for
+  Then, regardless, train on the `data` files using early stopping.
+
+  (Supported file formats are:
+   - * (tab-separated values), with source-target lines
+   - *.pkl (pickle dumps), with source-target lines, where source is either
+     - a single string, or
+     - a sequence of character-probability tuples.)
+
+  If no `valdata` were given, split off a random fraction of lines for
   validation. Otherwise, use only those files for validation.
 
   If the training has been successful, save the model under `save_model`.
@@ -224,43 +233,101 @@ Options:
   -d, --depth INTEGER RANGE  number of stacked hidden layers
   -v, --valdata FILE         file to use for validation (instead of random
                              split)
-  --help                     Show this message and exit.
+  -h, --help                 Show this message and exit.
+```
+
+### command line interface `cor-asv-ann-proc`
+
+To be used with plain-text files, TSV files (tab-delimited source-target lines
+– where target is ignored), or pickle dump files (source-target tuple lists –
+where target is ignored).
+
+```
+Usage: cor-asv-ann-proc [OPTIONS] [DATA]...
+
+  Apply a correction model on GT or text files.
+
+  Load a sequence-to-sequence model from the given path.
+
+  Then open the `data` files, (ignoring target side strings, if any) and
+  apply the model to its (source side) strings in batches, accounting for
+  input file names line by line.
+
+  (Supported file formats are:
+   - * (plain-text), with source lines,
+   - * (tab-separated values), with source-target lines,
+   - *.pkl (pickle dumps), with source-target lines, where source is either
+     - a single string, or
+     - a sequence of character-probability tuples.)
+
+  For each input file, open a new output file derived from its file name by
+  removing `old_suffix` (or the last extension) and appending `new_suffix`.
+  Write the resulting lines to that output file.
+
+Options:
+  -m, --load-model FILE        model file to load
+  -f, --fast                   only decode greedily
+  -r, --rejection FLOAT RANGE  probability of the input characters in all
+                               hypotheses (set 0 to use raw predictions)
+  -C, --charmap TEXT           mapping for input characters before passing to
+                               correction; can be used to adapt to character
+                               set mismatch between input and model (without
+                               relying on underspecification alone)
+  -S, --old-suffix TEXT        Suffix to remove from input files for output
+                               files
+  -s, --new-suffix TEXT        Suffix to append to input files for output
+                               files
+  -h, --help                   Show this message and exit.
 ```
 
 ### command line interface `cor-asv-ann-eval`
 
-To be used with string arguments and plain-text files.
+To be used with TSV files (tab-delimited source-target lines),
+or pickle dump files (source-target tuple lists).
 
 ```
 Usage: cor-asv-ann-eval [OPTIONS] [DATA]...
 
-  Evaluate a correction model.
+  Evaluate a correction model on GT files.
 
   Load a sequence-to-sequence model from the given path.
 
   Then apply on the file paths `data`, comparing predictions (both greedy
   and beamed) with GT target, and measuring error rates.
 
+  (Supported file formats are:
+   - * (tab-separated values), with source-target lines
+   - *.pkl (pickle dumps), with source-target lines, where source is either
+     - a single string, or
+     - a sequence of character-probability tuples.)
+
 Options:
   -m, --load-model FILE           model file to load
   -f, --fast                      only decode greedily
   -r, --rejection FLOAT RANGE     probability of the input characters in all
                                   hypotheses (set 0 to use raw predictions)
-  -n, --normalization [Levenshtein-fast|Levenshtein|NFC|NFKC|historic_latin]
+  -n, --normalization [Levenshtein|NFC|NFKC|historic_latin]
                                   normalize character sequences before
                                   alignment/comparison (set Levenshtein for
                                   none)
+  -C, --charmap TEXT              mapping for input characters before passing
+                                  to correction; can be used to adapt to
+                                  character set mismatch between input and
+                                  model (without relying on underspecification
+                                  alone)
   -l, --gt-level INTEGER RANGE    GT transcription level to use for
                                   historic_latin normlization (1: strongest,
                                   3: none)
   -c, --confusion INTEGER RANGE   show this number of most frequent (non-
                                   identity) edits (set 0 for none)
-  --help                          Show this message and exit.
+  -H, --histogram                 aggregate and compare character histograms
+  -h, --help                      Show this message and exit.
 ```
 
 ### command line interface `cor-asv-ann-compare`
 
-To be used with PAGE-XML or plain-text files (one for GT, one for OCR or COR output).
+To be used with PAGE-XML files, plain-text files, or plain-text file lists
+(of PAGE-XML or plain-text files), 1 for GT and N for predictions (OCR or COR).
 
 ```
 Usage: cor-asv-ann-compare [OPTIONS] GT_FILE [OCR_FILES]...
@@ -280,23 +347,19 @@ Usage: cor-asv-ann-compare [OPTIONS] GT_FILE [OCR_FILES]...
 Options:
   -o, --output-file FILE          path name of generated report (default:
                                   stdout)
-
   -n, --normalization [Levenshtein-fast|Levenshtein|NFC|NFKC|historic_latin]
                                   normalize character sequences before
                                   alignment/comparison (set Levenshtein for
                                   none)
-
   -l, --gt-level INTEGER RANGE    GT transcription level to use for
                                   historic_latin normlization (1: strongest,
                                   3: none)
-
   -c, --confusion INTEGER RANGE   show this number of most frequent (non-
                                   identity) edits (set 0 for none)
-
+  -H, --histogram                 aggregate and compare character histograms
   -F, --file-lists                interpret files as plain text files with one
                                   file path per line
-
-  --help                          Show this message and exit.
+  -h, --help                      Show this message and exit.
 ```
 
 
@@ -425,7 +488,6 @@ Parameters:
     decode greedy instead of beamed, with batches of parallel lines
     instead of parallel alternatives; also disables rejection and beam
     parameters; enable if performance is far more important than quality
-
 ```
 
 ### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-evaluate`
@@ -480,14 +542,21 @@ Options:
 Parameters:
    "metric" [string - "Levenshtein-fast"]
     Distance metric to calculate and aggregate: `historic_latin` for GT
-    level 1, `NFKC` for GT level 2 (except `ſ-s`), `Levenshtein` for GT
-    level 3 (or `Levenshtein-fast` for faster alignment but using
-    maximum sequence length instead of path length as CER denominator).
+    level 1-3, `NFKC` for roughly GT level 2 (but including reduction of
+    `ſ/s` and superscript numerals etc), `Levenshtein` for GT level 3
+    (or `Levenshtein-fast` for faster alignment but using maximum
+    sequence length instead of path length as CER denominator).
     Possible values: ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC",
     "historic_latin"]
+   "gt_level" [number - 1]
+    When `metric=historic_latin`, normalize and equate at this GT
+    transcription level.
+    Possible values: [1, 2, 3]
    "confusion" [number - 0]
     Count edits and show that number of most frequent confusions (non-
     identity) in the end.
+   "histogram" [boolean - false]
+    Aggregate and show mutual character histograms.
 ```
 
 The output file group for the evaluation tool will contain a JSON report of the CER distances of each text line per page, and an aggregated JSON report with the totals and the confusion table. It also makes extensive use of logging.
