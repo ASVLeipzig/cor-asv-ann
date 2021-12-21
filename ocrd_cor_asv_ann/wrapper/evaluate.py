@@ -3,7 +3,9 @@ from __future__ import absolute_import
 import os
 import math
 import json
+import click
 
+from ocrd.decorators import ocrd_cli_options, ocrd_cli_wrap_processor
 from ocrd import Processor
 from ocrd_utils import (
     getLogger,
@@ -17,6 +19,11 @@ from .config import OCRD_TOOL
 from ..lib.alignment import Alignment, Edits
 
 TOOL_NAME = 'ocrd-cor-asv-ann-evaluate'
+
+@click.command()
+@ocrd_cli_options
+def ocrd_cor_asv_ann_evaluate(*args, **kwargs):
+    return ocrd_cli_wrap_processor(EvaluateLines, *args, **kwargs)
 
 class EvaluateLines(Processor):
     

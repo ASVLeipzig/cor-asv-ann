@@ -27,6 +27,7 @@ Contents:
      * [command line interface cor-asv-ann-compare](#command-line-interface-cor-asv-ann-compare)
      * [OCR-D processor interface ocrd-cor-asv-ann-process](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)
      * [OCR-D processor interface ocrd-cor-asv-ann-evaluate](#ocr-d-processor-interface-ocrd-cor-asv-ann-evaluate)
+     * [OCR-D processor interface ocrd-cor-asv-ann-align](#ocr-d-processor-interface-ocrd-cor-asv-ann-align)
   * [Testing](#testing)
 
 
@@ -560,6 +561,72 @@ Parameters:
 ```
 
 The output file group for the evaluation tool will contain a JSON report of the CER distances of each text line per page, and an aggregated JSON report with the totals and the confusion table. It also makes extensive use of logging.
+
+### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-align`
+
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.de/about/) annotation workflow.
+
+Inputs could be anything with a textual annotation (`TextEquiv` on the line level), but at least 2 (or 3 for `method=majority`). No input will be priviledged regarding text content, but the first input fileGrp will serve as the base annotation for the output.
+
+```
+Usage: ocrd-cor-asv-ann-align [OPTIONS]
+
+  Align different textline annotations and pick best
+
+  > Align textlines of multiple file groups and choose the 'best'
+  > characters.
+
+  > Find files in all input file groups of the workspace for the same
+  > pageIds.
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the TextLine level, looking at each first
+  > TextEquiv. Align character sequences in all pairs of lines for the
+  > same TextLine IDs, and for each position pick the 'best' character
+  > hypothesis among the inputs.
+
+  > Choice depends on ``method``:
+  > - if `majority`, then use a majority rule over the inputs
+  >   (requires at least 3 input fileGrps),
+  > - if `confidence`, then use the candidate with the highest confidence
+  >   (requires input with per-character or per-line confidence annotations),
+  > - if `combined`, then try a heuristic combination of both approaches
+  >   (requires both conditions).
+
+  > Then concatenate those character choices to new TextLines (without
+  > segmentation at lower levels).
+
+  > Finally, make the parent regions (higher levels) consistent with
+  > that textual result (via concatenation joined by whitespace).
+
+  > Produce new output files by serialising the resulting hierarchy.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "method" [string - "majority"]
+    decide by majority of OCR hypotheses, by highest confidence of OCRs
+    or by a combination thereof
+    Possible values: ["majority", "confidence", "combined"]
+```
 
 ## Testing
 

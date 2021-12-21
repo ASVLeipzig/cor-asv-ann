@@ -1,6 +1,6 @@
 {
   "git_url": "https://github.com/ASVLeipzig/cor-asv-ann",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "tools": {
     "ocrd-cor-asv-ann-process": {
       "executable": "ocrd-cor-asv-ann-process",
@@ -113,6 +113,36 @@
           "description": "Aggregate and show mutual character histograms."
         }
       }
-    }
+    },
+    "ocrd-cor-asv-ann-align": {
+      "executable": "ocrd-cor-asv-ann-align",
+      "categories": [
+        "Text recognition and optimization"
+      ],
+      "steps": [
+        "recognition/post-correction"
+      ],
+      "description": "Align different textline annotations and pick best",
+      "input_file_grp": [
+        "OCR-D-GT-SEG-LINE",
+        "OCR-D-OCR-TESS",
+        "OCR-D-OCR-KRAK",
+        "OCR-D-OCR-OCRO",
+        "OCR-D-OCR-CALA",
+        "OCR-D-OCR-ANY",
+        "OCR-D-COR-ASV"
+      ],
+      "output_file_grp": [
+        "OCR-D-OCR-MULTI"
+      ],
+      "parameters": {
+        "method": {
+          "type": "string",
+          "enum": ["majority", "confidence", "combined"],
+          "default": "majority",
+          "description": "decide by majority of OCR hypotheses, by highest confidence of OCRs or by a combination thereof"
+        }
+      }
+    }    
   }
 }

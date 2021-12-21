@@ -3,7 +3,9 @@ from __future__ import absolute_import
 import os
 from functools import reduce
 import numpy as np
+import click
 
+from ocrd.decorators import ocrd_cli_options, ocrd_cli_wrap_processor
 from ocrd import Processor
 from ocrd_utils import (
     getLogger,
@@ -36,6 +38,11 @@ from ..lib.seq2seq import Sequence2Sequence, GAP
 from ..lib.alignment import Alignment
 
 TOOL_NAME = 'ocrd-cor-asv-ann-process'
+
+@click.command()
+@ocrd_cli_options
+def ocrd_cor_asv_ann_process(*args, **kwargs):
+    return ocrd_cli_wrap_processor(ANNCorrection, *args, **kwargs)
 
 class ANNCorrection(Processor):
     

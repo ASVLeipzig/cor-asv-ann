@@ -172,7 +172,7 @@ class Alignment():
         length = max(len(target_text), len(source_text))
         return dist/length if length else 0
     
-    def get_adjusted_distance(self, source_text, target_text, normalization=None, gtlevel=1):
+    def get_adjusted_distance(self, source_text, target_text, normalization=None, gtlevel=1, return_alignment=False):
         """Normalize and align strings, recombining characters, and calculate unweighted edit distance.
         
         If ``normalization`` is a known Unicode canonicalization method,
@@ -344,8 +344,11 @@ class Alignment():
             else:
                 dist += 1.0
         length = len(alignment)
-            
-        return dist / length if length else 0
+
+        rate = dist / length if length else 0
+        if return_alignment:
+            return rate, alignment
+        return rate
     
     @staticmethod
     def best_alignment(source_text, target_text, with_confusion=False):

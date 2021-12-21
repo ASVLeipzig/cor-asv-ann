@@ -8,6 +8,7 @@ Installs:
     - cor-asv-ann-repl
     - ocrd-cor-asv-ann-process
     - ocrd-cor-asv-ann-evaluate
+    - ocrd-cor-asv-ann-align
 """
 import codecs
 
@@ -44,8 +45,9 @@ setup(
             'cor-asv-ann-eval=ocrd_cor_asv_ann.scripts.eval:cli',
             'cor-asv-ann-proc=ocrd_cor_asv_ann.scripts.proc:cli',
             'cor-asv-ann-repl=ocrd_cor_asv_ann.scripts.repl:cli',
-            'ocrd-cor-asv-ann-process=ocrd_cor_asv_ann.wrapper.cli:ocrd_cor_asv_ann_process',
-            'ocrd-cor-asv-ann-evaluate=ocrd_cor_asv_ann.wrapper.cli:ocrd_cor_asv_ann_evaluate',
+            'ocrd-cor-asv-ann-process=ocrd_cor_asv_ann.wrapper.transcode:ocrd_cor_asv_ann_process',
+            'ocrd-cor-asv-ann-evaluate=ocrd_cor_asv_ann.wrapper.evaluate:ocrd_cor_asv_ann_evaluate',
+            'ocrd-cor-asv-ann-align=ocrd_cor_asv_ann.wrapper.align:ocrd_cor_asv_ann_align',
         ]
     },
 )
