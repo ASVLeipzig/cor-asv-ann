@@ -329,7 +329,15 @@ def page_get_line_sequences(pcgts):
                     line_confs.append(line_conf0)
             if not len(line_confs):
                 line_confs = [line_conf0] * len(line_str)
-            assert len(line_confs) == len(line_str)
+            elif len(line_confs) > len(line_str):
+                LOG.error("Line '%s' contains too long word/glyph sequence (%d>%d)",
+                          line.id, len(line_confs), len(line_str))
+                line_confs = line_confs[:len(line_str)]
+            elif len(line_confs) < len(line_str):
+                LOG.error("Line '%s' contains too short word/glyph sequence (%d<%d)",
+                          line.id, len(line_confs), len(line_str))
+                line_conf0 = sum(line_confs) / len(line_confs)
+                line_confs = line_confs + [line_conf0] * (len(line_str) - len(line_confs))
             result[line] = (line_str, line_confs)
     return result
 
