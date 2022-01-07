@@ -252,7 +252,10 @@ class AlignLines(Processor):
                         bestpath.append(subchars.index(best))
                 LOG.debug("best path through voting results for '%s': %s", line_id, str(bestpath))
                 LOG.debug("best voted line for '%s': %s", line_id, linetext)
-                lineconf = sum(lineconf) / len(lineconf)
+                if len(lineconf):
+                    lineconf = sum(lineconf) / len(lineconf)
+                else:
+                    lineconf = 1.0
                 # write back to line0
                 line0.TextEquiv[0].Unicode = linetext
                 line0.TextEquiv[0].conf = lineconf
