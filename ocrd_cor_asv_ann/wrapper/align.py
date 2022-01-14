@@ -133,95 +133,81 @@ class AlignLines(Processor):
                 dists = [sum(distances[i][j] for i, j in pairwise(path))
                          for path in paths]
                 path = paths[min(enumerate(dists), key=lambda x: x[1])[0]]
-                #LOG.debug("best path through alignments for '%s' between all input files: %s", line_id, str(path))
+                LOG.debug("best path through alignments for '%s' between all input files: %s", line_id, str(path))
                 # iteratively expand 2-alignments to N-alignments
                 chars = list() # as sequence of tuples of alternative chars/strings
                 confs = list() # as sequence of tuples of corresponding confidences
+                i = path[0]
+                for char, conf in zip(charseqs[i], confseqs[i]):
+                    # init
+                    subchar = [''] * nseqs
+                    subconf = [1.0] * nseqs
+                    subchar[i] = char
+                    subconf[i] = conf
+                    chars.append(subchar)
+                    confs.append(subconf)
                 for i, j in pairwise(path):
-                    if not len(chars):
-                        # init list and put into pos i and j
-                        starti = startj = 0
-                        for ci, cj in alignments[i][j]:
-                            if ci == 0:
-                                ci = ''
-                            if cj == 0:
-                                cj = ''
-                            endi = starti + len(ci)
-                            endj = startj + len(cj)
+                    # extend j from already existing side i
+                    starti = startj = 0
+                    newpos = oldpos = 0
+                    while newpos < len(alignments[i][j]):
+                        ci, cj = alignments[i][j][newpos]
+                        if ci == 0:
+                            ci = ''
+                        if cj == 0:
+                            cj = ''
+                        endi = starti + len(ci)
+                        endj = startj + len(cj)
+                        assert charseqs[i][starti:endi] == ci
+                        assert charseqs[j][startj:endj] == cj
+                        if oldpos == len(chars):
+                            # previous alignments were all shorter
+                            assert not ci
+                            chars[oldpos-1][j] += cj
+                            confs[oldpos-1][j] = avg([confs[oldpos-1][j]] + confseqs[j][startj:endj])
+                            newpos += 1
+                            startj = endj
+                            continue
+                        subchars = chars[oldpos]
+                        subconfs = confs[oldpos]
+                        # start of subchars[i] == start of ci
+                        if len(ci) > len(subchars[i]):
+                            #LOG.debug("at %d: merging chars for '%s'←'%s'", oldpos, ci, subchars[i])
+                            # merge chars and confs oldpos/oldpos+1
+                            assert oldpos + 1 < len(chars)
+                            nextsubchars = chars[oldpos + 1]
+                            nextsubconfs = confs[oldpos + 1]
+                            chars[oldpos] = ['' + c1 + c2 for c1, c2 in zip(subchars, nextsubchars)]
+                            confs[oldpos] = [avg([c1, c2]) for c1, c2 in zip(subconfs, nextsubconfs)]
+                            chars = chars[:oldpos+1] + chars[oldpos+2:]
+                            confs = confs[:oldpos+1] + confs[oldpos+2:]
+                        elif len(ci) < len(subchars[i]):
+                            #LOG.debug("at %d: merging aligns for '%s'→'%s'", oldpos, ci, subchars[i])
+                            # merge alignments newpos/newpos+1
+                            assert newpos + 1 < len(alignments[i][j])
+                            nextci, nextcj = alignments[i][j][newpos+1]
+                            if nextci == 0:
+                                nextci = ''
+                            if nextcj == 0:
+                                nextcj = ''
+                            ci += nextci
+                            cj += nextcj
+                            endi += len(nextci)
+                            endj += len(nextcj)
                             assert charseqs[i][starti:endi] == ci
                             assert charseqs[j][startj:endj] == cj
-                            subchars = [''] * nseqs
-                            subconfs = [1.0] * nseqs
-                            subchars[i] = ci
+                            alignments[i][j][newpos] = ci, cj
+                            alignments[i][j] = alignments[i][j][:newpos+1] + alignments[i][j][newpos+2:]
+                        else:
+                            #LOG.debug("at %d: advancing for '%s'", oldpos, ci)
                             subchars[j] = cj
-                            subconfs[i] = avg(confseqs[i][starti:endi])
                             subconfs[j] = avg(confseqs[j][startj:endj])
                             starti = endi
                             startj = endj
-                            chars.append(subchars)
-                            confs.append(subconfs)
-                    else:
-                        # extend j from already existing side i
-                        starti = startj = 0
-                        newpos = oldpos = 0
-                        while newpos < len(alignments[i][j]):
-                            ci, cj = alignments[i][j][newpos]
-                            if ci == 0:
-                                ci = ''
-                            if cj == 0:
-                                cj = ''
-                            endi = starti + len(ci)
-                            endj = startj + len(cj)
-                            assert charseqs[i][starti:endi] == ci
-                            assert charseqs[j][startj:endj] == cj
-                            if oldpos == len(chars):
-                                # previous alignments were all shorter
-                                assert not ci
-                                chars[oldpos-1][j] += cj
-                                confs[oldpos-1][j] = avg([confs[oldpos-1][j]] + confseqs[j][startj:endj])
-                                newpos += 1
-                                startj = endj
-                                continue
-                            subchars = chars[oldpos]
-                            subconfs = confs[oldpos]
-                            # start of subchars[i] == start of ci
-                            if len(ci) > len(subchars[i]):
-                                #LOG.debug("at %d: merging chars for '%s'←'%s'", oldpos, ci, subchars[i])
-                                # merge chars and confs oldpos/oldpos+1
-                                assert oldpos + 1 < len(chars)
-                                nextsubchars = chars[oldpos + 1]
-                                nextsubconfs = confs[oldpos + 1]
-                                chars[oldpos] = ['' + c1 + c2 for c1, c2 in zip(subchars, nextsubchars)]
-                                confs[oldpos] = [avg([c1, c2]) for c1, c2 in zip(subconfs, nextsubconfs)]
-                                chars = chars[:oldpos+1] + chars[oldpos+2:]
-                                confs = confs[:oldpos+1] + confs[oldpos+2:]
-                            elif len(ci) < len(subchars[i]):
-                                #LOG.debug("at %d: merging aligns for '%s'→'%s'", oldpos, ci, subchars[i])
-                                # merge alignments newpos/newpos+1
-                                assert newpos + 1 < len(alignments[i][j])
-                                nextci, nextcj = alignments[i][j][newpos+1]
-                                if nextci == 0:
-                                    nextci = ''
-                                if nextcj == 0:
-                                    nextcj = ''
-                                ci += nextci
-                                cj += nextcj
-                                endi += len(nextci)
-                                endj += len(nextcj)
-                                assert charseqs[i][starti:endi] == ci
-                                assert charseqs[j][startj:endj] == cj
-                                alignments[i][j][newpos] = ci, cj
-                                alignments[i][j] = alignments[i][j][:newpos+1] + alignments[i][j][newpos+2:]
-                            else:
-                                #LOG.debug("at %d: advancing for '%s'", oldpos, ci)
-                                subchars[j] = cj
-                                subconfs[j] = avg(confseqs[j][startj:endj])
-                                starti = endi
-                                startj = endj
-                                newpos += 1
-                                oldpos += 1
-                        assert newpos == len(alignments[i][j])
-                        #assert oldpos == len(chars) # chars can be longer if previous pairs had trailing inserts
+                            newpos += 1
+                            oldpos += 1
+                    assert newpos == len(alignments[i][j])
+                    #assert oldpos == len(chars) # chars can be longer if previous pairs had trailing inserts
                     assert starti == len(charseqs[i])
                     assert startj == len(charseqs[j])
                 # vote
