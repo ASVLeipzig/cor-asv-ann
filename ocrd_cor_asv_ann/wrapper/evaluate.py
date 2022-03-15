@@ -54,6 +54,8 @@ class EvaluateLines(Processor):
         confusion = self.parameter['confusion']
         histogram = self.parameter['histogram']
         LOG.info('Using evaluation metric "%s".', metric)
+        if metric == 'Levenshtein-fast' and confusion > 0:
+            LOG.warning('There will be no confusion statistics with this metric.')
         
         ifgs = self.input_file_grp.split(",") # input file groups
         if len(ifgs) < 2:
