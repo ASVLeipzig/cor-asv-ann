@@ -143,6 +143,35 @@
           "description": "decide by majority of OCR hypotheses, by highest confidence of OCRs or by a combination thereof"
         }
       }
-    }    
+    },
+    "ocrd-cor-asv-ann-join": {
+      "executable": "ocrd-cor-asv-ann-join",
+      "categories": [
+        "Text recognition and optimization"
+      ],
+      "steps": [
+        "recognition/post-correction"
+      ],
+      "description": "Join different textline annotations by concatenation",
+      "input_file_grp": [
+        "OCR-D-GT-SEG-LINE",
+        "OCR-D-OCR-TESS",
+        "OCR-D-OCR-KRAK",
+        "OCR-D-OCR-OCRO",
+        "OCR-D-OCR-CALA",
+        "OCR-D-OCR-ANY",
+        "OCR-D-COR-ASV"
+      ],
+      "output_file_grp": [
+        "OCR-D-OCR-MULTI"
+      ],
+      "parameters": {
+        "add-filegrp-comments": {
+          "type": "boolean",
+          "default": false,
+          "description": "set @comments of each TextEquiv to the fileGrp it came from"
+        }
+      }
+    }
   }
 }
