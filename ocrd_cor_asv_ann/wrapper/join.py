@@ -71,7 +71,7 @@ class JoinLines(Processor):
                     continue
                 LOG.info("INPUT FILE for %s: %s", ifgs[i], input_file.ID)
                 pcgts = page_from_file(self.workspace.download_file(input_file))
-                file_id2line[i] = {line.id: line for line in pcgts.get_AllTextLines()}
+                file_id2line[i] = {line.id: line for line in pcgts.get_Page().get_AllTextLines()}
                 if not i:
                     # first input fileGrp becomes base for output fileGrp
                     output_pcgts = pcgts
