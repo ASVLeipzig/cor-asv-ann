@@ -88,9 +88,10 @@ class JoinLines(Processor):
                         for equiv in line.TextEquiv:
                             equiv.set_comments(ifgs[i])
                 # get line texts among all input files for this line ID
-                texts = itertools.from_iterable([line.TextEquiv for line in lines
-                                                 # ignore missing lines and empty lines
-                                                 if line and line.TextEquiv])
+                texts = itertools.chain.from_iterable(
+                    [line.TextEquiv for line in lines
+                     # ignore missing lines and empty lines
+                     if line and line.TextEquiv])
                 # write back to line0
                 line0.TextEquiv = texts
 
