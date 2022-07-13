@@ -96,7 +96,10 @@ class JoinLines(Processor):
                 line0.TextEquiv = texts
 
             # write back result to page report
-            file_id = make_file_id(ift[0], self.output_file_grp)
+            if ift[0].fileGrp == self.output_file_grp and self.workspace.overwrite_mode:
+                file_id = ift[0].ID # overwrite
+            else:
+                file_id = make_file_id(ift[0], self.output_file_grp)
             output_pcgts.set_pcGtsId(file_id)
             file_path = os.path.join(self.output_file_grp, file_id + '.xml')
             self.workspace.add_file(
