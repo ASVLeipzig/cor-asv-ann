@@ -9,6 +9,8 @@ Installs:
     - ocrd-cor-asv-ann-process
     - ocrd-cor-asv-ann-evaluate
     - ocrd-cor-asv-ann-align
+    - ocrd-cor-asv-ann-join
+    - ocrd-cor-asv-ann-mark
 """
 import codecs
 
@@ -48,6 +50,8 @@ setup(
             'ocrd-cor-asv-ann-process=ocrd_cor_asv_ann.wrapper.transcode:ocrd_cor_asv_ann_process',
             'ocrd-cor-asv-ann-evaluate=ocrd_cor_asv_ann.wrapper.evaluate:ocrd_cor_asv_ann_evaluate',
             'ocrd-cor-asv-ann-align=ocrd_cor_asv_ann.wrapper.align:ocrd_cor_asv_ann_align',
+            'ocrd-cor-asv-ann-join=ocrd_cor_asv_ann.wrapper.join:ocrd_cor_asv_ann_join',
+            'ocrd-cor-asv-ann-mark=ocrd_cor_asv_ann.wrapper.mark:ocrd_cor_asv_ann_mark',
         ]
     },
 )

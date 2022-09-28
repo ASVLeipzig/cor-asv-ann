@@ -60,7 +60,8 @@ class AlignLines(Processor):
         segmentation at lower levels).
         
         Finally, make the parent regions (higher levels) consistent with that
-        textual result (via concatenation joined by whitespace).
+        textual result (via concatenation joined by whitespace), and remove the
+        child words/glyphs (lower levels) altogether.
         
         Produce new output files by serialising the resulting hierarchy.
         """
@@ -245,6 +246,8 @@ class AlignLines(Processor):
                 # write back to line0
                 line0.TextEquiv[0].Unicode = linetext
                 line0.TextEquiv[0].conf = lineconf
+                # delete Word and Glyph segmentation (no longer valid/consistent)
+                line0.Word = []
 
             # make higher levels consistent again:
             page_update_higher_textequiv_levels('line', output_pcgts)
