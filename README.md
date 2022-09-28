@@ -29,6 +29,7 @@ Contents:
      * [OCR-D processor interface ocrd-cor-asv-ann-evaluate](#ocr-d-processor-interface-ocrd-cor-asv-ann-evaluate)
      * [OCR-D processor interface ocrd-cor-asv-ann-align](#ocr-d-processor-interface-ocrd-cor-asv-ann-align)
      * [OCR-D processor interface ocrd-cor-asv-ann-join](#ocr-d-processor-interface-ocrd-cor-asv-ann-join)
+     * [OCR-D processor interface ocrd-cor-asv-ann-mark](#ocr-d-processor-interface-ocrd-cor-asv-ann-mark)
   * [Testing](#testing)
 
 
@@ -677,6 +678,59 @@ Options:
 Parameters:
    "add-filegrp-comments" [boolean - false]
     set @comments of each TextEquiv to the fileGrp it came from
+```
+
+### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-mark`
+
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.de/about/) annotation workflow.
+
+Inputs could be anything with a textual annotation (`TextEquiv` on the word level).
+
+```
+Usage: ocrd-cor-asv-ann-mark [OPTIONS]
+
+  mark words not found by a spellchecker
+
+  > Mark words that are not recognized by a spellchecker
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the word level. If there is no text or empty text,
+  > continue. Otherwise, normalize the text content by apply the
+  > character-wise `normalization`, and stripping any non-letters. Pass
+  > that string into `command`: if the output is not empty, then mark
+  > the word according to `format`.
+
+  > Produce new output files by serialising the resulting hierarchy.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "command" [string - REQUIRED]
+    external tool to query word forms, e.g. 'hunspell -i utf-8 -d
+    de_DE,en_US -w'
+   "normalization" [object - {}]
+    mapping of characters prior to spellcheck, e.g. {'ſ': 's', 'aͤ': 'ä'}
+   "format" [string - "conf"]
+    how unknown words should be marked; if 'conf', then writes
+    @conf=0.123, otherwise writes that value into @comments
 ```
 
 
