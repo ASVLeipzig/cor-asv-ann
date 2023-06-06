@@ -149,8 +149,7 @@ class EvaluateLines(Processor):
                          file_wedits[i].mean, math.sqrt(file_wedits[i].varia),
                          input_file.pageId, ifgs[0], ifgs[i])
                 pair = ifgs[0] + ',' + ifgs[i]
-                if pair not in report:
-                    continue
+                report[pair] = {}
                 report[pair]['num-lines'] = file_cedits[i].length
                 report[pair]['char-error-rate-mean'] = file_cedits[i].mean
                 report[pair]['char-error-rate-varia'] = file_cedits[i].varia
