@@ -14,7 +14,7 @@ jobs:
       - run: |
           git clone https://github.com/OCR-D/ocrd_all /tmp/ocrd_all
           pushd /tmp/ocrd_all
-          make -f <(echo new:; echo ' $(pip_install_tf1nvidia)') -f Makefile new SEMPIP=
+          make -f <(echo preinstall:; echo '	$(pip_install_tf1nvidia)') -f Makefile preinstall SEMPIP=
       - checkout
       - run: make deps
       - run: make install
