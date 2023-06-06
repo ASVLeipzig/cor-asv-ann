@@ -9,6 +9,11 @@ jobs:
       PYTHON: python3
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends make git
+      # workaround for tensorflow-gpu not being available on PyPI anymore:
+      # get nvidia-tensorflow from nvidia-pyindex and repackage it as tensorflow-gpu
+      - run: |
+          git clone https://github.com/OCR-D/ocrd_all && \
+          make -f <(echo new:; echo ' $(pip_install_tf1nvidia)') -f ocrd_all/Makefile new SEMPIP=
       - checkout
       - run: make deps
       - run: make install
