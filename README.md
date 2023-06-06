@@ -21,10 +21,15 @@ Contents:
   * [Installation](#installation)
   * [Usage](#usage)
      * [command line interface cor-asv-ann-train](#command-line-interface-cor-asv-ann-train)
-     * [command line interface cor-asv-ann-eval](#command-line-interface-cor-asv-ann-eval)
      * [command line interface cor-asv-ann-repl](#command-line-interface-cor-asv-ann-repl)
+     * [command line interface cor-asv-ann-proc](#command-line-interface-cor-asv-ann-proc)
+     * [command line interface cor-asv-ann-eval](#command-line-interface-cor-asv-ann-eval)
+     * [command line interface cor-asv-ann-compare](#command-line-interface-cor-asv-ann-compare)
      * [OCR-D processor interface ocrd-cor-asv-ann-process](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)
      * [OCR-D processor interface ocrd-cor-asv-ann-evaluate](#ocr-d-processor-interface-ocrd-cor-asv-ann-evaluate)
+     * [OCR-D processor interface ocrd-cor-asv-ann-align](#ocr-d-processor-interface-ocrd-cor-asv-ann-align)
+     * [OCR-D processor interface ocrd-cor-asv-ann-join](#ocr-d-processor-interface-ocrd-cor-asv-ann-join)
+     * [OCR-D processor interface ocrd-cor-asv-ann-mark](#ocr-d-processor-interface-ocrd-cor-asv-ann-mark)
   * [Testing](#testing)
 
 
@@ -102,13 +107,17 @@ Decode beamed, selecting the best output candidates of the best history hypothes
 
 During beam search (default decoder mode), whenever the input and output is in good alignment (i.e. the attention model yields an alignment approximately 1 character after their predecessor's alignment on average), it is possible to estimate the current position in the source string. This input character's predicted output score, when smaller than a given (i.e. variable) probability threshold can be clipped to that minimum. This effectively adds a candidate which _rejects_ correction at that position (keeping the input unchanged).
 
-![rejection example](./rejection.png "soft alignment and probabilities, greedy and beamed (red is rejection)")
+![rejection example](./rejection.png "soft alignment and probabilities, greedy and beamed (red is the rejection candidate)")
+
+That probability is called _rejection threshold_ as a runtime parameter. But while 0.0 _will_ disable rejection completely (i.e. the input hypothesis, if at all identifiable, will keep its predicted score), 1.0 will _not_ disable correction completely (because the input hypothesis might not be found if alignment is too bad). 
 
 ### Underspecification and gap
 
 Input characters that have not been seen during training must be well-behaved at inference time: They must be represented by a reserved index, and should behave like **neutral/unknown** characters instead of spoiling HL states and predictions in a longer follow-up context. This is achieved by dedicated leave-one-out training and regularization to optimize for interpolation of all known characters. At runtime, the encoder merely shows a warning of the previously unseen character.
 
 The same device is useful to fill a known **gap** in the input (the only difference being that no warning is shown).
+
+As an additional facility, characters that are known in advance to not fit well with the model can be mapped prior to correction with the `charmap` parameter.
 
 ### Training
 
@@ -126,7 +135,7 @@ For tools and datasets, cf. [data processing subrepository](https://github.com/A
 
 When applied on [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) (as [OCR-D workspace processor](https://ocr-d.github.io/cli), cf. [usage](#ocr-d-processor-interface-ocrd-cor-asv-ann-process)), this component also allows processing below the `TextLine` hierarchy level, i.e. on `Word` or `Glyph` level.
 
-For that it uses the soft alignment scores to calculate an optimal **hard alignment** path for characters, and thereby distributes the transduction onto the lower level elements (keeping their coordinates and other meta-data), while changing Word segmentation if necessary (i.e. merging and splitting tokens).
+For that one needs to distribute the line-level transduction onto the lower level elements (keeping their coordinates and other meta-data), while changing Word segmentation if necessary (i.e. merging and splitting tokens). To calculate an optimal **hard alignment** path for characters, we _could_ use the soft alignment scores – but in practise, the quality of an independent, a-posteriori string alignment (i.e. Needleman-Wunsch algorithm) is better.
 
 ### Evaluation
 
@@ -134,9 +143,11 @@ Text lines can be compared (by aligning and computing a distance under some metr
 
 Distances are accumulated (as micro-averages) as character error rate (CER) mean and stddev, but only on the character level.
 
-There are a number of distance metrics available (all operating on grapheme clusters, not mere codepoints):
+There are a number of distance metrics available (all but the first operating on grapheme clusters, not mere codepoints, and using the alignment path length as denominator, not just the maximum string length):
+- `Levenshtein-fast`:  
+  simple unweighted edit distance (fastest, standard; GT level 3; no regard for combining sequences; max-length norm)
 - `Levenshtein`:  
-  simple unweighted edit distance (fastest, standard; GT level 3)
+  simple unweighted edit distance (GT level 3)
 - `NFC`:  
   like `Levenshtein`, but apply Unicode normal form with canonical composition before (i.e. less than GT level 2)
 - `NFKC`:  
@@ -152,31 +163,33 @@ Besides [OCR-D](https://github.com/OCR-D/core), this builds on Keras/Tensorflow.
 
 Required Ubuntu packages:
 
-* Python (``python`` or ``python3``)
-* pip (``python-pip`` or ``python3-pip``)
-* venv (``python-venv`` or ``python3-venv``)
+* Python (`python` or `python3`)
+* pip (`python-pip` or `python3-pip`)
+* venv (`python-venv` or `python3-venv`)
 
 Create and activate a virtual environment as usual.
 
 To install Python dependencies:
-```shell
-make deps
-```
+
+    make deps
+
 Which is the equivalent of:
-```shell
-pip install -r requirements.txt
-```
+
+    pip install -r requirements.txt
+
 
 To install this module, then do:
-```shell
-make install
-```
+
+    make install
+
 Which is the equivalent of:
-```shell
-pip install .
-```
+
+    pip install .
+
 
 The module can use CUDA-enabled GPUs (when sufficiently installed), but can also run on CPU only. Models are always interchangable.
+
+> Note: Models and code are still based on Keras 2.3 / Tensorflow 1.15, which are already end-of-life. You might need an extra venv just for this module to avoid conflicts with other packages. Also, Python >= 3.8 and CUDA toolkit >= 11.0 might not work with prebuilt Tensorflow versions (but see [installation](./INSTALL.md) in that case).
 
 ## Usage
 
@@ -184,12 +197,13 @@ This packages has the following user interfaces:
 
 ### command line interface `cor-asv-ann-train`
 
-To be used with string arguments and plain-text files.
+To be used with TSV files (tab-delimited source-target lines),
+or pickle dump files (source-target tuple lists).
 
 ```
 Usage: cor-asv-ann-train [OPTIONS] [DATA]...
 
-  Train a correction model.
+  Train a correction model on GT files.
 
   Configure a sequence-to-sequence model with the given parameters.
 
@@ -199,8 +213,15 @@ Usage: cor-asv-ann-train [OPTIONS] [DATA]...
   less hidden layers, then fixate the loaded weights afterwards.) If given
   `reset_encoder`, re-initialise the encoder weights afterwards.
 
-  Then, regardless, train on the file paths `data` using early stopping. If
-  no `valdata` were given, split off a random fraction of lines for
+  Then, regardless, train on the `data` files using early stopping.
+
+  (Supported file formats are:
+   - * (tab-separated values), with source-target lines
+   - *.pkl (pickle dumps), with source-target lines, where source is either
+     - a single string, or
+     - a sequence of character-probability tuples.)
+
+  If no `valdata` were given, split off a random fraction of lines for
   validation. Otherwise, use only those files for validation.
 
   If the training has been successful, save the model under `save_model`.
@@ -215,22 +236,73 @@ Options:
   -d, --depth INTEGER RANGE  number of stacked hidden layers
   -v, --valdata FILE         file to use for validation (instead of random
                              split)
-  --help                     Show this message and exit.
+  -h, --help                 Show this message and exit.
+```
+
+### command line interface `cor-asv-ann-proc`
+
+To be used with plain-text files, TSV files (tab-delimited source-target lines
+– where target is ignored), or pickle dump files (source-target tuple lists –
+where target is ignored).
+
+```
+Usage: cor-asv-ann-proc [OPTIONS] [DATA]...
+
+  Apply a correction model on GT or text files.
+
+  Load a sequence-to-sequence model from the given path.
+
+  Then open the `data` files, (ignoring target side strings, if any) and
+  apply the model to its (source side) strings in batches, accounting for
+  input file names line by line.
+
+  (Supported file formats are:
+   - * (plain-text), with source lines,
+   - * (tab-separated values), with source-target lines,
+   - *.pkl (pickle dumps), with source-target lines, where source is either
+     - a single string, or
+     - a sequence of character-probability tuples.)
+
+  For each input file, open a new output file derived from its file name by
+  removing `old_suffix` (or the last extension) and appending `new_suffix`.
+  Write the resulting lines to that output file.
+
+Options:
+  -m, --load-model FILE        model file to load
+  -f, --fast                   only decode greedily
+  -r, --rejection FLOAT RANGE  probability of the input characters in all
+                               hypotheses (set 0 to use raw predictions)
+  -C, --charmap TEXT           mapping for input characters before passing to
+                               correction; can be used to adapt to character
+                               set mismatch between input and model (without
+                               relying on underspecification alone)
+  -S, --old-suffix TEXT        Suffix to remove from input files for output
+                               files
+  -s, --new-suffix TEXT        Suffix to append to input files for output
+                               files
+  -h, --help                   Show this message and exit.
 ```
 
 ### command line interface `cor-asv-ann-eval`
 
-To be used with string arguments and plain-text files.
+To be used with TSV files (tab-delimited source-target lines),
+or pickle dump files (source-target tuple lists).
 
 ```
 Usage: cor-asv-ann-eval [OPTIONS] [DATA]...
 
-  Evaluate a correction model.
+  Evaluate a correction model on GT files.
 
   Load a sequence-to-sequence model from the given path.
 
   Then apply on the file paths `data`, comparing predictions (both greedy
   and beamed) with GT target, and measuring error rates.
+
+  (Supported file formats are:
+   - * (tab-separated values), with source-target lines
+   - *.pkl (pickle dumps), with source-target lines, where source is either
+     - a single string, or
+     - a sequence of character-probability tuples.)
 
 Options:
   -m, --load-model FILE           model file to load
@@ -241,12 +313,56 @@ Options:
                                   normalize character sequences before
                                   alignment/comparison (set Levenshtein for
                                   none)
+  -C, --charmap TEXT              mapping for input characters before passing
+                                  to correction; can be used to adapt to
+                                  character set mismatch between input and
+                                  model (without relying on underspecification
+                                  alone)
   -l, --gt-level INTEGER RANGE    GT transcription level to use for
                                   historic_latin normlization (1: strongest,
                                   3: none)
   -c, --confusion INTEGER RANGE   show this number of most frequent (non-
                                   identity) edits (set 0 for none)
-  --help                          Show this message and exit.
+  -H, --histogram                 aggregate and compare character histograms
+  -h, --help                      Show this message and exit.
+```
+
+### command line interface `cor-asv-ann-compare`
+
+To be used with PAGE-XML files, plain-text files, or plain-text file lists
+(of PAGE-XML or plain-text files), 1 for GT and N for predictions (OCR or COR).
+
+```
+Usage: cor-asv-ann-compare [OPTIONS] GT_FILE [OCR_FILES]...
+
+  Compare text lines by aligning and computing the textual distance and
+  character error rate.
+
+  This compares 1:n given PAGE-XML or plain text files.
+
+  If `--file-lists` is given and files are plain text, then they will be
+  interpreted as (newline-separated) lists of path names for single-line
+  text files (for Ocropus convention).
+
+  Writes a JSON report file to `--output-file`. (No error aggregation across
+  files in this CLI.)
+
+Options:
+  -o, --output-file FILE          path name of generated report (default:
+                                  stdout)
+  -n, --normalization [Levenshtein-fast|Levenshtein|NFC|NFKC|historic_latin]
+                                  normalize character sequences before
+                                  alignment/comparison (set Levenshtein for
+                                  none)
+  -l, --gt-level INTEGER RANGE    GT transcription level to use for
+                                  historic_latin normlization (1: strongest,
+                                  3: none)
+  -c, --confusion INTEGER RANGE   show this number of most frequent (non-
+                                  identity) edits (set 0 for none)
+  -H, --histogram                 aggregate and compare character histograms
+  -F, --file-lists                interpret files as plain text files with one
+                                  file path per line
+  -h, --help                      Show this message and exit.
 ```
 
 
@@ -290,72 +406,92 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 
 Input could be anything with a textual annotation (`TextEquiv` on the given `textequiv_level`). 
 
-Pretrained model files are contained in the [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, and under the path in the environment variable `CORASVANN_DATA` (if given).
+Pretrained model files are contained in the [models subrepository](https://github.com/ASVLeipzig/cor-asv-ann-models/). At runtime, you can use both absolute and relative paths for model files. The latter are searched for in the installation directory, under the path in the environment variable `CORASVANN_DATA` (if given), and in the default paths of the OCR-D resource manager (i.e. you can do `ocrd resmgr download -na ocrd-cor-asv-ann-process https://github.com/ASVLeipzig/cor-asv-ann-models/blob/master/s2s.dta19.Fraktur4.d2.w0512.adam.attention.stateless.variational-dropout.char.pretrained+retrained-conf.h5` and then `ocrd resmgr list-installed -e ocrd-cor-asv-ann-process` tells you that `s2s.dta19.Fraktur4.d2.w0512.adam.attention.stateless.variational-dropout.char.pretrained+retrained-conf.h5` will resolve as `model_file`).
 
 
-```json
-    "ocrd-cor-asv-ann-process": {
-      "executable": "ocrd-cor-asv-ann-process",
-      "categories": [
-        "Text recognition and optimization"
-      ],
-      "steps": [
-        "recognition/post-correction"
-      ],
-      "description": "Improve text annotation by character-level encoder-attention-decoder ANN model",
-      "input_file_grp": [
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY"
-      ],
-      "output_file_grp": [
-        "OCR-D-COR-ASV"
-      ],
-      "parameters": {
-        "model_file": {
-          "type": "string",
-          "format": "uri",
-          "content-type": "application/x-hdf;subtype=bag",
-          "description": "path of h5py weight/config file for model trained with cor-asv-ann-train",
-          "required": true,
-          "cacheable": true
-        },
-        "textequiv_level": {
-          "type": "string",
-          "enum": ["line", "word", "glyph"],
-          "default": "glyph",
-          "description": "PAGE XML hierarchy level to read/write TextEquiv input/output on"
-        },
-        "rejection_threshold": {
-          "type": "number",
-          "format": "float",
-          "default": 0.5,
-          "description": "minimum probability of the candidate corresponding to the input character in each hypothesis during beam search, helps balance precision/recall trade-off; set to 0 to disable rejection (max recall) or 1 to disable correction (max precision)"
-        },
-        "relative_beam_width": {
-          "type": "number",
-          "format": "float",
-          "default": 0.2,
-          "description": "minimum fraction of the best candidate's probability required to enter the beam in each hypothesis; controls the quality/performance trade-off"
-        },
-        "fixed_beam_width": {
-          "type": "number",
-          "format": "integer",
-          "default": 15,
-          "description": "maximum number of candidates allowed to enter the beam in each hypothesis; controls the quality/performance trade-off"
-        },
-        "fast_mode": {
-          "type": "boolean",
-          "default": false,
-          "description": "decode greedy instead of beamed, with batches of parallel lines instead of parallel alternatives; also disables rejection and beam parameters; enable if performance is far more important than quality"
-        }
-      }
-   }
 ```
+Usage: ocrd-cor-asv-ann-process [OPTIONS]
 
-...
+  Improve text annotation by character-level encoder-attention-decoder ANN model
+
+  > Perform OCR post-correction with encoder-attention-decoder ANN on
+  > the workspace.
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the requested `textequiv_level`, making sequences
+  > of TextEquiv objects as lists of lines. Concatenate their string
+  > values, obeying rules of implicit whitespace, and map the string
+  > positions where the objects start.
+
+  > Next, transcode the input lines into output lines in parallel, and
+  > use the retrieved soft alignment scores to calculate hard alignment
+  > paths between input and output string via Viterbi decoding. Then use
+  > those to map back the start positions and overwrite each TextEquiv
+  > with its new content, paying special attention to whitespace:
+
+  > Distribute edits such that whitespace objects cannot become more
+  > than whitespace (or be deleted) and that non-whitespace objects must
+  > not start or end with whitespace (but may contain new whitespace in
+  > the middle).
+
+  > Subsequently, unless processing on the `line` level, make the Word
+  > segmentation consistent with that result again: merge around deleted
+  > whitespace tokens and split at whitespace inside non-whitespace
+  > tokens.
+
+  > Finally, make the levels above `textequiv_level` consistent with
+  > that textual result (via concatenation joined by whitespace).
+
+  > Produce new output files by serialising the resulting hierarchy.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "model_file" [string - REQUIRED]
+    path of h5py weight/config file for model trained with cor-asv-ann-
+    train
+   "textequiv_level" [string - "glyph"]
+    PAGE XML hierarchy level to read/write TextEquiv input/output on
+    Possible values: ["line", "word", "glyph"]
+   "charmap" [object - {}]
+    mapping for input characters before passing to correction; can be
+    used to adapt to character set mismatch between input and model
+    (without relying on underspecification alone)
+   "rejection_threshold" [number - 0.5]
+    minimum probability of the candidate corresponding to the input
+    character in each hypothesis during beam search, helps balance
+    precision/recall trade-off; set to 0 to disable rejection (max
+    recall) or 1 to disable correction (max precision)
+   "relative_beam_width" [number - 0.2]
+    minimum fraction of the best candidate's probability required to
+    enter the beam in each hypothesis; controls the quality/performance
+    trade-off
+   "fixed_beam_width" [number - 15]
+    maximum number of candidates allowed to enter the beam in each
+    hypothesis; controls the quality/performance trade-off
+   "fast_mode" [boolean - false]
+    decode greedy instead of beamed, with batches of parallel lines
+    instead of parallel alternatives; also disables rejection and beam
+    parameters; enable if performance is far more important than quality
+```
 
 ### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-evaluate`
 
@@ -367,47 +503,236 @@ There are various evaluation [metrics](#Evaluation) available.
 
 The tool can also aggregate and show the most frequent character confusions.
 
-```json
-    "ocrd-cor-asv-ann-evaluate": {
-      "executable": "ocrd-cor-asv-ann-evaluate",
-      "categories": [
-        "Text recognition and optimization"
-      ],
-      "steps": [
-        "recognition/evaluation"
-      ],
-      "description": "Align different textline annotations and compute distance",
-      "input_file_grp": [
-        "OCR-D-GT-SEG-LINE",
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY",
-        "OCR-D-COR-ASV"
-      ],
-      "output_file_grp": [
-        "OCR-D-EVAL-CER"
-      ],
-      "parameters": {
-        "metric": {
-          "type": "string",
-          "enum": ["Levenshtein", "NFC", "NFKC", "historic_latin"],
-          "default": "Levenshtein",
-          "description": "Distance metric to calculate and aggregate: historic_latin for GT level 1, NFKC for GT level 2 (except ſ-s), Levenshtein for GT level 3"
-        },
-        "confusion": {
-          "type": "number",
-          "format": "integer",
-          "minimum": 0,
-          "default": 0,
-          "description": "Count edits and show that number of most frequent confusions (non-identity) in the end."
-        }
-      }
-    }
+```
+Usage: ocrd-cor-asv-ann-evaluate [OPTIONS]
+
+  Align different textline annotations and compute distance
+
+  > Align textlines of multiple file groups and calculate distances.
+
+  > Find files in all input file groups of the workspace for the same
+  > pageIds. The first file group serves as reference annotation (ground
+  > truth).
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the TextLine level, looking at each first
+  > TextEquiv. Align character sequences in all pairs of lines for the
+  > same TextLine IDs, and calculate the distances using the error
+  > metric `metric`. Accumulate distances and sequence lengths per file
+  > group globally and per file, and show each fraction as a CER rate in
+  > the log.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "metric" [string - "Levenshtein-fast"]
+    Distance metric to calculate and aggregate: `historic_latin` for GT
+    level 1-3, `NFKC` for roughly GT level 2 (but including reduction of
+    `ſ/s` and superscript numerals etc), `Levenshtein` for GT level 3
+    (or `Levenshtein-fast` for faster alignment but using maximum
+    sequence length instead of path length as CER denominator).
+    Possible values: ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC",
+    "historic_latin"]
+   "gt_level" [number - 1]
+    When `metric=historic_latin`, normalize and equate at this GT
+    transcription level.
+    Possible values: [1, 2, 3]
+   "confusion" [number - 0]
+    Count edits and show that number of most frequent confusions (non-
+    identity) in the end.
+   "histogram" [boolean - false]
+    Aggregate and show mutual character histograms.
 ```
 
 The output file group for the evaluation tool will contain a JSON report of the CER distances of each text line per page, and an aggregated JSON report with the totals and the confusion table. It also makes extensive use of logging.
+
+### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-align`
+
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.de/about/) annotation workflow.
+
+Inputs could be anything with a textual annotation (`TextEquiv` on the line level), but at least 2 fileGrps (or 3 for `method=majority`). No input will be priviledged regarding text content, but the first input fileGrp will serve as the base annotation for the output.
+
+```
+Usage: ocrd-cor-asv-ann-align [OPTIONS]
+
+  Align different textline annotations and pick best
+
+  > Align textlines of multiple file groups and choose the 'best'
+  > characters.
+
+  > Find files in all input file groups of the workspace for the same
+  > pageIds.
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the TextLine level, looking at each first
+  > TextEquiv. Align character sequences in all pairs of lines for the
+  > same TextLine IDs, and for each position pick the 'best' character
+  > hypothesis among the inputs.
+
+  > Choice depends on ``method``:
+  > - if `majority`, then use a majority rule over the inputs
+  >   (requires at least 3 input fileGrps),
+  > - if `confidence`, then use the candidate with the highest confidence
+  >   (requires input with per-character or per-line confidence annotations),
+  > - if `combined`, then try a heuristic combination of both approaches
+  >   (requires both conditions).
+
+  > Then concatenate those character choices to new TextLines (without
+  > segmentation at lower levels).
+
+  > Finally, make the parent regions (higher levels) consistent with
+  > that textual result (via concatenation joined by whitespace), and
+  > remove the child words/glyphs (lower levels) altogether.
+
+  > Produce new output files by serialising the resulting hierarchy.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "method" [string - "majority"]
+    decide by majority of OCR hypotheses, by highest confidence of OCRs
+    or by a combination thereof
+    Possible values: ["majority", "confidence", "combined"]
+```
+
+### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-join`
+
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.de/about/) annotation workflow.
+
+Inputs could be anything with a textual annotation (`TextEquiv` on the line level), but at least 2 fileGrps. No input will be priviledged regarding text content, but the first input fileGrp will become the first TextEquiv (which is usually the preferred annotation in OCR-D processors for consumption).
+
+```
+Usage: ocrd-cor-asv-ann-join [OPTIONS]
+
+  Join different textline annotations by concatenation
+
+  > Join textlines of multiple file groups by concatenating their text
+  > results.
+
+  > Find files in all input file groups of the workspace for the same
+  > pageIds.
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the TextLine level. Concatenate the TextEquivs for
+  > all lines with the same TextLine IDs, optionally differentiating
+  > them by adding their original fileGrp name in @comments.
+
+  > Produce new output files by serialising the resulting hierarchy.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "add-filegrp-comments" [boolean - false]
+    set @comments of each TextEquiv to the fileGrp it came from
+```
+
+### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-mark`
+
+To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) documents in an [OCR-D](https://ocr-d.de/about/) annotation workflow.
+
+Inputs could be anything with a textual annotation (`TextEquiv` on the word level).
+
+```
+Usage: ocrd-cor-asv-ann-mark [OPTIONS]
+
+  mark words not found by a spellchecker
+
+  > Mark words that are not recognized by a spellchecker
+
+  > Open and deserialise PAGE input files, then iterate over the element
+  > hierarchy down to the word level. If there is no text or empty text,
+  > continue. Otherwise, normalize the text content by apply the
+  > character-wise `normalization`, and stripping any non-letters. Pass
+  > that string into `command`: if the output is not empty, then mark
+  > the word according to `format`.
+
+  > Produce new output files by serialising the resulting hierarchy.
+
+Options:
+  -I, --input-file-grp USE        File group(s) used as input
+  -O, --output-file-grp USE       File group(s) used as output
+  -g, --page-id ID                Physical page ID(s) to process
+  --overwrite                     Remove existing output pages/images
+                                  (with --page-id, remove only those)
+  -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
+                                  or JSON file path
+  -P, --param-override KEY VAL    Override a single JSON object key-value pair,
+                                  taking precedence over --parameter
+  -m, --mets URL-PATH             URL or file path of METS to process
+  -w, --working-dir PATH          Working directory of local workspace
+  -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
+                                  Log level
+  -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
+  -L, --list-resources            List names of processor resources
+  -J, --dump-json                 Dump tool description as JSON and exit
+  -h, --help                      This help message
+  -V, --version                   Show version
+
+Parameters:
+   "command" [string - REQUIRED]
+    external tool to query word forms, e.g. 'hunspell -i utf-8 -d
+    de_DE,en_US -w'
+   "normalization" [object - {}]
+    mapping of characters prior to spellcheck, e.g. {'ſ': 's', 'aͤ': 'ä'}
+   "format" [string - "conf"]
+    how unknown words should be marked; if 'conf', then writes
+    @conf=0.123, otherwise writes that value into @comments
+```
+
 
 ## Testing
 

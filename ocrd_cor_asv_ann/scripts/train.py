@@ -5,7 +5,9 @@ import click
 
 from ..lib.seq2seq import Sequence2Sequence
 
-@click.command()
+CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
+
+@click.command(context_settings=CONTEXT_SETTINGS)
 @click.option('-m', '--save-model', default="model.h5", help='model file for saving',
               type=click.Path(dir_okay=False, writable=True))
 @click.option('--load-model', help='model file for loading (incremental/pre-training)',
@@ -24,7 +26,7 @@ from ..lib.seq2seq import Sequence2Sequence
 # or plain text files (mode 'r')
 @click.argument('data', nargs=-1, type=click.Path(dir_okay=False, exists=True))
 def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata, data):
-    """Train a correction model.
+    """Train a correction model on GT files.
     
     Configure a sequence-to-sequence model with the given parameters.
     
@@ -35,12 +37,23 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata
     weights afterwards.)
     If given `reset_encoder`, re-initialise the encoder weights afterwards.
     
-    Then, regardless, train on the file paths `data` using early stopping.
+    Then, regardless, train on the `data` files using early stopping.
+    
+    \b
+    (Supported file formats are:
+     - * (tab-separated values), with source-target lines
+     - *.pkl (pickle dumps), with source-target lines, where source is either
+       - a single string, or
+       - a sequence of character-probability tuples.)
+    
     If no `valdata` were given, split off a random fraction of lines for
     validation. Otherwise, use only those files for validation.
     
     If the training has been successful, save the model under `save_model`.
     """
+    if not data:
+        raise ValueError("Training needs at least one data file")
+    
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
     logging.basicConfig(format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s - %(message)s',

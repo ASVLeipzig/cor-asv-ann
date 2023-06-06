@@ -1,8 +1,8 @@
-ocrd >= 2.20.0
+ocrd >= 2.22.0
 click
 keras == 2.3.*
 numpy
 tensorflow-gpu == 1.15.*
-h5py
+h5py<3.0.0
 editdistance
 matplotlib

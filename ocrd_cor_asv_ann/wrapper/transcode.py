@@ -3,7 +3,9 @@ from __future__ import absolute_import
 import os
 from functools import reduce
 import numpy as np
+import click
 
+from ocrd.decorators import ocrd_cli_options, ocrd_cli_wrap_processor
 from ocrd import Processor
 from ocrd_utils import (
     getLogger,
@@ -16,13 +18,31 @@ from ocrd_utils import (
 from ocrd_modelfactory import page_from_file
 from ocrd_models.ocrd_page import (
     to_xml,
-    WordType, CoordsType, TextEquivType
+    WordType, CoordsType, TextEquivType,
+    ReadingOrderType,
+    RegionRefType,
+    RegionRefIndexedType,
+    OrderedGroupType,
+    OrderedGroupIndexedType,
+    UnorderedGroupType,
+    UnorderedGroupIndexedType,
+)
+from ocrd_models.ocrd_page_generateds import (
+    ReadingDirectionSimpleType,
+    TextLineOrderSimpleType,
+    TextTypeSimpleType
 )
 
 from .config import OCRD_TOOL
 from ..lib.seq2seq import Sequence2Sequence, GAP
+from ..lib.alignment import Alignment
 
 TOOL_NAME = 'ocrd-cor-asv-ann-process'
+
+@click.command()
+@ocrd_cli_options
+def ocrd_cor_asv_ann_process(*args, **kwargs):
+    return ocrd_cli_wrap_processor(ANNCorrection, *args, **kwargs)
 
 class ANNCorrection(Processor):
     
@@ -30,41 +50,36 @@ class ANNCorrection(Processor):
         kwargs['ocrd_tool'] = OCRD_TOOL['tools'][TOOL_NAME]
         kwargs['version'] = OCRD_TOOL['version']
         super(ANNCorrection, self).__init__(*args, **kwargs)
-        if (not hasattr(self, 'workspace') or not self.workspace or
-            not hasattr(self, 'parameter') or not self.parameter):
-            # no parameter/workspace for --dump-json or --version (no processing)
-            return
-        
-        if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
-            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
+        if hasattr(self, 'output_file_grp') and self.output_file_grp:
+            # processing context
+            self.setup()
 
+    def setup(self):
+        if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
+            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # error
         def canread(path):
             return os.path.isfile(path) and os.access(path, os.R_OK)
         def getfile(path):
             if canread(path):
                 return path
-            dirname = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                os.pardir, os.pardir)
-            if canread(os.path.join(dirname, path)):
-                return os.path.join(dirname, path)
-            dirname = os.path.join(dirname, 'models')
-            if canread(os.path.join(dirname, path)):
-                return os.path.join(dirname, path)
             if 'CORASVANN_DATA' in os.environ:
                 dirname = os.environ['CORASVANN_DATA']
                 if canread(os.path.join(dirname, path)):
                     return os.path.join(dirname, path)
-            raise Exception('Cannot find model_file in path "%s"' % path)
-        
+            resolved = self.resolve_resource(path)
+            if canread(resolved):
+                return resolved
+            raise Exception('Cannot read model_file in path "%s"' % path)
+        self.logger = getLogger('processor.ANNCorrection')
         model_file = getfile(self.parameter['model_file'])
-        self.s2s = Sequence2Sequence(logger=getLogger('processor.ANNCorrection'), progbars=True)
+        self.s2s = Sequence2Sequence(logger=self.logger, progbars=True)
         self.s2s.load_config(model_file)
         self.s2s.configure()
         self.s2s.load_weights(model_file)
         self.s2s.rejection_threshold = self.parameter['rejection_threshold']
         self.s2s.beam_width_in = self.parameter['fixed_beam_width']
         self.s2s.beam_threshold_in = self.parameter['relative_beam_width']
+        self.logger.debug("Loaded model_file '%s'", self.parameter['model_file'])
         
     def process(self):
         """Perform OCR post-correction with encoder-attention-decoder ANN on the workspace.
@@ -81,7 +96,7 @@ class ANNCorrection(Processor):
         new content, paying special attention to whitespace:
         
         Distribute edits such that whitespace objects cannot become more than whitespace
-        (or be deleted) and that non-whitespace objects must not start of end with
+        (or be deleted) and that non-whitespace objects must not start or end with
         whitespace (but may contain new whitespace in the middle).
         
         Subsequently, unless processing on the `line` level, make the Word segmentation
@@ -89,7 +104,7 @@ class ANNCorrection(Processor):
         split at whitespace inside non-whitespace tokens.
         
         Finally, make the levels above `textequiv_level` consistent with that
-        textual result (by concatenation joined by whitespace).
+        textual result (via concatenation joined by whitespace).
         
         Produce new output files by serialising the resulting hierarchy.
         """
@@ -101,13 +116,12 @@ class ANNCorrection(Processor):
         # elements, from Glyph/Word/TextLine to Word/TextLine/TextRegion), and
         # its classes are not hashable.
         level = self.parameter['textequiv_level']
-        LOG = getLogger('processor.ANNCorrection')
         for n, input_file in enumerate(self.input_files):
-            LOG.info("INPUT FILE %i / %s", n, input_file.pageId or input_file.ID)
+            self.logger.info("INPUT FILE %i / %s", n, input_file.pageId or input_file.ID)
 
             pcgts = page_from_file(self.workspace.download_file(input_file))
             page_id = input_file.pageId or input_file.ID # (PageType has no id)
-            LOG.info("Correcting text in page '%s' at the %s level", page_id, level)
+            self.logger.info("Correcting text in page '%s' at the %s level", page_id, level)
             
             # annotate processing metadata:
             self.add_metadata(pcgts)
@@ -118,7 +132,8 @@ class ANNCorrection(Processor):
 
             # concatenate to strings and get dict of start positions to refs:
             input_lines, conf, textequiv_starts, word_starts, textline_starts = (
-                _line_sequences2string_sequences(self.s2s.mapping[0], line_sequences))
+                _line_sequences2string_sequences(self.s2s.mapping[0], line_sequences,
+                                                 charmap=self.parameter['charmap']))
             
             # correct string and get input-output alignment:
             # FIXME: split into self.batch_size chunks
@@ -129,28 +144,29 @@ class ANNCorrection(Processor):
             
             # re-align (from alignment scores) and overwrite the textequiv references:
             for (input_line, output_line, output_prob,
-                 score, alignment,
-                 textequivs, words, textlines) in zip(
+                 output_score, alignment, textequivs, words, textlines) in zip(
                      input_lines, output_lines, output_probs,
-                     output_scores, alignments,
-                     textequiv_starts, word_starts, textline_starts):
-                LOG.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
+                     output_scores, alignments, textequiv_starts, word_starts, textline_starts):
+                self.logger.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
                 
                 # convert soft scores (seen from output) to hard path (seen from input):
-                realignment = _alignment2path(alignment, len(input_line), len(output_line),
-                                              1. / self.s2s.voc_size)
+                #realignment = _alignment2path(alignment, len(input_line), len(output_line),
+                #                              1. / self.s2s.voc_size)
+                # create hard path via minimal edit distance:
+                realignment, distance = _alignment_path(input_line, output_line)
                 
                 # overwrite TextEquiv references:
                 new_sequence = _update_sequence(
                     input_line, output_line, output_prob,
-                    score, realignment,
+                    output_score, realignment,
                     textequivs, words, textlines)
                 
                 # update Word segmentation:
                 if level != 'line':
                     _resegment_sequence(new_sequence, level)
                 
-                LOG.info('corrected line with %d elements, ppl: %.3f', len(new_sequence), np.exp(score))
+                self.logger.info('corrected line with %d elements, ppl: %.3f, CER: %.1f%%',
+                                 len(new_sequence), np.exp(output_score), distance * 100)
             
             # make higher levels consistent again:
             page_update_higher_textequiv_levels(level, pcgts)
@@ -192,70 +208,68 @@ def _page_get_line_sequences_at(level, pcgts):
     regions = pcgts.get_Page().get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
         LOG.warning("Page contains no text regions")
-    first_region = True
     for region in regions:
         lines = region.get_TextLine()
         if not lines:
             LOG.warning("Region '%s' contains no text lines", region.id)
-            continue
-        if not first_region:
-            sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
-        first_region = False
-        first_line = True
         for line in lines:
-            if not first_line:
-                sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
             sequences.append([])
-            first_line = False
             if level == 'line':
                 #LOG.debug("Getting text in line '%s'", line.id)
                 textequivs = line.get_TextEquiv()
-                if not textequivs:
+                if textequivs:
+                    sequences[-1].append((textequivs[0], word, line))
+                else:
                     LOG.warning("Line '%s' contains no text results", line.id)
-                    continue
-                sequences[-1].append((textequivs[0], word, line))
-                continue
-            words = line.get_Word()
-            if not words:
-                LOG.warning("Line '%s' contains no word", line.id)
-                continue
-            first_word = True
-            for word in words:
-                if not first_word:
+            else:
+                words = line.get_Word()
+                if not words:
+                    LOG.warning("Line '%s' contains no word", line.id)
+                for word in words:
+                    if level == 'word':
+                        #LOG.debug("Getting text in word '%s'", word.id)
+                        textequivs = word.get_TextEquiv()
+                        if textequivs:
+                            sequences[-1].append((textequivs[0], word, line))
+                        else:
+                            LOG.warning("Word '%s' contains no text results", word.id)
+                            continue # no inter-word
+                    else:
+                        glyphs = word.get_Glyph()
+                        if not glyphs:
+                            LOG.warning("Word '%s' contains no glyphs", word.id)
+                            continue # no inter-word
+                        for glyph in glyphs:
+                            #LOG.debug("Getting text in glyph '%s'", glyph.id)
+                            textequivs = glyph.get_TextEquiv()
+                            if textequivs:
+                                sequences[-1].append((textequivs[0], word, line))
+                            else:
+                                LOG.warning("Glyph '%s' contains no text results", glyph.id)
+                                # treat as gap
+                                textequivs = [TextEquivType(Unicode='', conf=1.0)]
+                                glyph.set_TextEquiv(textequivs)
+                                sequences[-1].append((textequivs[0], word, line))
                     sequences[-1].append((TextEquivType(Unicode=' ', conf=1.0, index=-1), word, line))
-                first_word = False
-                if level == 'word':
-                    #LOG.debug("Getting text in word '%s'", word.id)
-                    textequivs = word.get_TextEquiv()
-                    if not textequivs:
-                        LOG.warning("Word '%s' contains no text results", word.id)
-                        continue
-                    sequences[-1].append((textequivs[0], word, line))
-                    continue
-                glyphs = word.get_Glyph()
-                if not glyphs:
-                    LOG.warning("Word '%s' contains no glyphs", word.id)
-                    continue
-                for glyph in glyphs:
-                    #LOG.debug("Getting text in glyph '%s'", glyph.id)
-                    textequivs = glyph.get_TextEquiv()
-                    if not textequivs:
-                        LOG.warning("Glyph '%s' contains no text results", glyph.id)
-                        continue
-                    sequences[-1].append((textequivs[0], word, line))
-    if sequences:
-        sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
+                if sequences[-1]:
+                    sequences[-1].pop() # no inter-word
+            sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
     # filter empty lines (containing only newline):
     return [line for line in sequences if len(line) > 1]
 
-def _line_sequences2string_sequences(mapping, line_sequences):
+def _line_sequences2string_sequences(mapping, line_sequences, charmap=None):
     '''Concatenate TextEquiv / Word / TextLine sequences to line strings.
     
     Return a list of line strings, a list of confidence lists,
     a list of dicts from string positions to TextEquiv references,
     a list of dicts from string positions to Word references, and
     a list of dicts from string positions to TextLine references.
+    
+    If `charmap` is not None, apply it as a character translation
+    table on all characters.
     '''
+    if charmap:
+        charmap = str.maketrans(charmap)
     input_lines, conf, textequiv_starts, word_starts, textline_starts = [], [], [], [], []
     for line_sequence in line_sequences:
         i = 0
@@ -268,6 +282,8 @@ def _line_sequences2string_sequences(mapping, line_sequences):
             textequiv_starts[-1][i] = textequiv
             word_starts[-1][i] = word
             textline_starts[-1][i] = textline
+            if charmap:
+                textequiv.Unicode = textequiv.Unicode.translate(charmap)
             j = len(textequiv.Unicode)
             if not textequiv.Unicode:
                 # empty element (OCR rejection):
@@ -343,11 +359,39 @@ def _alignment2path(alignment, i_max, j_max, min_score):
             j -= 1
             i -= 1
     realignment[0] = 0 # init start of line
+    # LOG = getLogger('processor.ANNCorrection')
     # LOG.debug('realignment: %s', str(realignment))
     # from matplotlib import pyplot
+    # pyplot.imshow(np.array(alignment).T)
+    # pyplot.show()
     # pyplot.imshow(viterbi_fw)
     # pyplot.show()
     return realignment
+
+def _alignment_path(input_text, output_text):
+    '''Find the minimal distance path through string pair via Smith-Waterman alignment.
+    
+    Return a dictionary mapping input positions to output positions
+    (i.e. a realignment path).
+    '''
+    alignment = Alignment.best_alignment(input_text, output_text)
+    realignment = {0: 0} # init start of line
+    i, j, dist = 0, 0, 0.0
+    for input_sym, output_sym in alignment:
+        if input_sym:
+            i += len(input_sym)
+        if output_sym:
+            j += len(output_sym)
+        if input_sym != output_sym:
+            dist += 1.0
+        realignment[i] = j
+    assert i == len(input_text)
+    assert j == len(output_text)
+    assert len(alignment) > 0
+    dist /= len(alignment) - 1 # ignore newline
+    # LOG = getLogger('processor.ANNCorrection')
+    # LOG.debug('realignment: %s', str(realignment))
+    return realignment, dist
 
 def _update_sequence(input_line, output_line, output_prob,
                      score, realignment,
@@ -374,7 +418,7 @@ def _update_sequence(input_line, output_line, output_prob,
     j_max = len(output_line)
     textequivs.setdefault(i_max, None) # init end of line
     line = next(line for line in textlines.values() if line)
-    last = None
+    last = []
     sequence = []
     for i in textequivs:
         if i in realignment:
@@ -386,6 +430,13 @@ def _update_sequence(input_line, output_line, output_prob,
         if last:
             input_ = input_line[last[0]:i]
             output = output_line[last[1]:j]
+            prob = output_prob[last[1]:j]
+            textequiv = textequivs[last[0]]
+            assert textequiv.Unicode == input_, (
+                'source element "%s" does not match input section "%s" in line "%s"' % (
+                    textequiv.Unicode, input_, line.id))
+            #print("'" + textequiv.Unicode + "' → '" + output + "'" \
+            #      "[" + str(textequiv.conf if textequiv.index != -1 else -1) + " → " + str(prob) + "]")
             # try to distribute whitespace onto whitespace, i.e.
             # if input is Whitespace, move any Non-whitespace parts
             # in output to neighbours;
@@ -393,7 +444,7 @@ def _update_sequence(input_line, output_line, output_prob,
             # if their input is Whitespace too;
             # input:  N|    W    |N   N|     W   |   W|    N    |W
             # output:  |<-N W N->|     |<-W<-N W |    |<-W N W->|
-            if input_ in (" ", "\n"):
+            if textequiv.index == -1:
                 if output and not output.startswith((" ", "\n")) and sequence:
                     while output and not output.startswith((" ", "\n")):
                         sequence[-1][0].Unicode += output[0]
@@ -417,19 +468,13 @@ def _update_sequence(input_line, output_line, output_prob,
                         last[1] += 1
                         output = output[1:]
                     #print('corrected whitespace LHS: ', last, [i, j])
-                if output.endswith((" ", "\n")) and i < i_max and input_line[i] in (" ", "\n"):
+                if output.endswith((" ", "\n")) and i < i_max and textequivs[i].index == -1:
                     while output.endswith((" ", "\n")):
                         j -= 1
                         output = output[:-1]
                     #print('corrected whitespace RHS: ', last, [i, j])
-            textequiv = textequivs[last[0]]
-            assert textequiv.Unicode == input_, (
-                'source element "%s" does not match input section "%s" in line "%s"' % (
-                    textequiv.Unicode, input_, line.id))
-            #print("'" + textequiv.Unicode + "' -> '" + output + "'")
             textequiv.Unicode = output
             #textequiv.conf = np.exp(-score)
-            prob = output_prob[last[1]:j]
             textequiv.conf = np.mean(prob or [1.0])
             word = words[last[0]]
             textline = textlines[last[0]]
@@ -439,6 +484,8 @@ def _update_sequence(input_line, output_line, output_prob,
         'alignment path did not reach top: %d/%d vs %d/%d in line "%s"' % (
             last[0], last[1], i_max, j_max, line.id))
     for i, (textequiv, _, _) in enumerate(sequence):
+        # disallow non-whitespace mapping to -1 (artificial whitespace)
+        # (but allow whitespace to anything and anything to true segments)
         assert not textequiv.Unicode.split() or textequiv.index != -1, (
             'output "%s" will be lost at (whitespace) element %d in line "%s"' % (
                 textequiv.Unicode, i, line.id))
@@ -580,47 +627,151 @@ def _split_word_at_space(word):
     next_.set_TextEquiv([textequiv_next])
     return prev_, next_
 
-def page_update_higher_textequiv_levels(level, pcgts):
-    '''Update the TextEquivs of all PAGE-XML hierarchy levels above `level` for consistency.
+def page_update_higher_textequiv_levels(level, pcgts, overwrite=True):
+    """Update the TextEquivs of all PAGE-XML hierarchy levels above ``level`` for consistency.
     
-    Starting with the hierarchy level chosen for processing,
-    join all first TextEquiv (by the rules governing the respective level)
-    into TextEquiv of the next higher level, replacing them.
-    '''
-    regions = pcgts.get_Page().get_AllRegions(classes=['Text'], order='reading-order')
+    Starting with the lowest hierarchy level chosen for processing,
+    join all first TextEquiv.Unicode (by the rules governing the respective level)
+    into TextEquiv.Unicode of the next higher level, replacing them.
+    If ``overwrite`` is false and the higher level already has text, keep it.
+    
+    When two successive elements appear in a ``Relation`` of type ``join``,
+    then join them directly (without their respective white space).
+    
+    Likewise, average all first TextEquiv.conf into TextEquiv.conf of the next higher level.
+    
+    In the process, traverse the words and lines in their respective ``readingDirection``,
+    the (text) regions which contain lines in their respective ``textLineOrder``, and
+    the (text) regions which contain text regions in their ``ReadingOrder``
+    (if they appear there as an ``OrderedGroup``).
+    Where no direction/order can be found, use XML ordering.
+    
+    Follow regions recursively, but make sure to traverse them in a depth-first strategy.
+    """
+    page = pcgts.get_Page()
+    relations = page.get_Relations() # get RelationsType
+    if relations:
+        relations = relations.get_Relation() # get list of RelationType
+    else:
+        relations = []
+    joins = list() # 
+    for relation in relations:
+        if relation.get_type() == 'join': # ignore 'link' type here
+            joins.append((relation.get_SourceRegionRef().get_regionRef(),
+                          relation.get_TargetRegionRef().get_regionRef()))
+    reading_order = dict()
+    ro = page.get_ReadingOrder()
+    if ro:
+        page_get_reading_order(reading_order, ro.get_OrderedGroup() or ro.get_UnorderedGroup())
     if level != 'region':
-        for region in regions:
-            lines = region.get_TextLine()
-            if level != 'line':
-                for line in lines:
-                    words = line.get_Word()
-                    if level != 'word':
-                        for word in words:
-                            glyphs = word.get_Glyph()
-                            word_unicode = u''.join(glyph.get_TextEquiv()[0].Unicode
-                                                    if glyph.get_TextEquiv()
-                                                    else u'' for glyph in glyphs)
-                            word_conf = np.mean([glyph.get_TextEquiv()[0].conf
-                                                 if glyph.get_TextEquiv()
-                                                 else 1. for glyph in glyphs])
-                            word.set_TextEquiv( # remove old
-                                [TextEquivType(Unicode=word_unicode,
-                                               conf=word_conf)])
-                    line_unicode = u' '.join(word.get_TextEquiv()[0].Unicode
-                                             if word.get_TextEquiv()
-                                             else u'' for word in words)
-                    line_conf = np.mean([word.get_TextEquiv()[0].conf
-                                         if word.get_TextEquiv()
-                                         else 1. for word in words])
-                    line.set_TextEquiv( # remove old
-                        [TextEquivType(Unicode=line_unicode,
-                                       conf=line_conf)])
-            region_unicode = u'\n'.join(line.get_TextEquiv()[0].Unicode
-                                        if line.get_TextEquiv()
-                                        else u'' for line in lines)
-            region_conf = np.mean([line.get_TextEquiv()[0].conf
-                                   if line.get_TextEquiv()
-                                   else 1. for line in lines])
-            region.set_TextEquiv( # remove old
-                [TextEquivType(Unicode=region_unicode,
-                               conf=region_conf)])
+        for region in page.get_AllRegions(classes=['Text']):
+            # order is important here, because regions can be recursive,
+            # and we want to concatenate by depth first;
+            # typical recursion structures would be:
+            #  - TextRegion/@type=paragraph inside TextRegion
+            #  - TextRegion/@type=drop-capital followed by TextRegion/@type=paragraph inside TextRegion
+            #  - any region (including TableRegion or TextRegion) inside a TextRegion/@type=footnote
+            #  - TextRegion inside TableRegion
+            subregions = region.get_TextRegion()
+            if subregions: # already visited in earlier iterations
+                # do we have a reading order for these?
+                # TODO: what if at least some of the subregions are in reading_order?
+                if (all(subregion.id in reading_order for subregion in subregions) and
+                    isinstance(reading_order[subregions[0].id], # all have .index?
+                               (OrderedGroupType, OrderedGroupIndexedType))):
+                    subregions = sorted(subregions, key=lambda subregion:
+                                        reading_order[subregion.id].index)
+                region_unicode = page_element_unicode0(subregions[0])
+                for subregion, next_subregion in zip(subregions, subregions[1:]):
+                    if (subregion.id, next_subregion.id) not in joins:
+                        region_unicode += '\n' # or '\f'?
+                    region_unicode += page_element_unicode0(next_subregion)
+                region_conf = sum(page_element_conf0(subregion) for subregion in subregions)
+                region_conf /= len(subregions)
+            else: # TODO: what if a TextRegion has both TextLine and TextRegion children?
+                lines = region.get_TextLine()
+                if ((region.get_textLineOrder() or
+                     page.get_textLineOrder()) ==
+                    TextLineOrderSimpleType.BOTTOMTOTOP):
+                    lines = list(reversed(lines))
+                if level != 'line':
+                    for line in lines:
+                        words = line.get_Word()
+                        if ((line.get_readingDirection() or
+                             region.get_readingDirection() or
+                             page.get_readingDirection()) ==
+                            ReadingDirectionSimpleType.RIGHTTOLEFT):
+                            words = list(reversed(words))
+                        if level != 'word':
+                            for word in words:
+                                glyphs = word.get_Glyph()
+                                if ((word.get_readingDirection() or
+                                     line.get_readingDirection() or
+                                     region.get_readingDirection() or
+                                     page.get_readingDirection()) ==
+                                    ReadingDirectionSimpleType.RIGHTTOLEFT):
+                                    glyphs = list(reversed(glyphs))
+                                word_unicode = ''.join(page_element_unicode0(glyph) for glyph in glyphs)
+                                word_conf = sum(page_element_conf0(glyph) for glyph in glyphs)
+                                if glyphs:
+                                    word_conf /= len(glyphs)
+                                if not word.get_TextEquiv() or overwrite:
+                                    word.set_TextEquiv( # replace old, if any
+                                        [TextEquivType(Unicode=word_unicode, conf=word_conf)])
+                        line_unicode = ' '.join(page_element_unicode0(word) for word in words)
+                        line_conf = sum(page_element_conf0(word) for word in words)
+                        if words:
+                            line_conf /= len(words)
+                        if not line.get_TextEquiv() or overwrite:
+                            line.set_TextEquiv( # replace old, if any
+                                [TextEquivType(Unicode=line_unicode, conf=line_conf)])
+                region_unicode = ''
+                region_conf = 0
+                if lines:
+                    region_unicode = page_element_unicode0(lines[0])
+                    for line, next_line in zip(lines, lines[1:]):
+                        words = line.get_Word()
+                        next_words = next_line.get_Word()
+                        if not(words and next_words and (words[-1].id, next_words[0].id) in joins):
+                            region_unicode += '\n'
+                        region_unicode += page_element_unicode0(next_line)
+                    region_conf = sum(page_element_conf0(line) for line in lines)
+                    region_conf /= len(lines)
+            if not region.get_TextEquiv() or overwrite:
+                region.set_TextEquiv( # replace old, if any
+                    [TextEquivType(Unicode=region_unicode, conf=region_conf)])
+
+def page_get_reading_order(ro, rogroup):
+    """Add all elements from the given reading order group to the given dictionary.
+    
+    Given a dict ``ro`` from layout element IDs to ReadingOrder element objects,
+    and an object ``rogroup`` with additional ReadingOrder element objects,
+    add all references to the dict, traversing the group recursively.
+    """
+    regionrefs = list()
+    if isinstance(rogroup, (OrderedGroupType, OrderedGroupIndexedType)):
+        regionrefs = (rogroup.get_RegionRefIndexed() +
+                      rogroup.get_OrderedGroupIndexed() +
+                      rogroup.get_UnorderedGroupIndexed())
+    if isinstance(rogroup, (UnorderedGroupType, UnorderedGroupIndexedType)):
+        regionrefs = (rogroup.get_RegionRef() +
+                      rogroup.get_OrderedGroup() +
+                      rogroup.get_UnorderedGroup())
+    for elem in regionrefs:
+        ro[elem.get_regionRef()] = elem
+        if not isinstance(elem, (RegionRefType, RegionRefIndexedType)):
+            page_get_reading_order(ro, elem)
+
+def page_element_unicode0(element):
+    """Get Unicode string of the first text result."""
+    if element.get_TextEquiv():
+        return element.get_TextEquiv()[0].Unicode
+    else:
+        return ''
+
+def page_element_conf0(element):
+    """Get confidence (as float value) of the first text result."""
+    if element.get_TextEquiv():
+        # generateDS does not convert simpleType for attributes (yet?)
+        return float(element.get_TextEquiv()[0].conf or "1.0")
+    return 1.0
