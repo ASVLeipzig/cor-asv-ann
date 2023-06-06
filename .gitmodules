@@ -1,6 +1,6 @@
 [submodule "cor-asv-ann-data-processing"]
 	path = data-processing
-	url = ../cor-asv-ann-data-processing
+	url = https://git.informatik.uni-leipzig.de/ocr-d/cor-asv-ann-data-processing
 [submodule "cor-asv-ann-models"]
 	path = models
-	url = ../cor-asv-ann-models
+	url = https://git.informatik.uni-leipzig.de/ocr-d/cor-asv-ann-models
