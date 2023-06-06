@@ -3,7 +3,7 @@ jobs:
 
   build-python3:
     docker:
-      - image: ocrd/core
+      - image: ocrd/core-cuda
     environment:
       PIP: pip3
       PYTHON: python3
