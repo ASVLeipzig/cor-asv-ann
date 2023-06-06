@@ -12,8 +12,9 @@ jobs:
       # workaround for tensorflow-gpu not being available on PyPI anymore:
       # get nvidia-tensorflow from nvidia-pyindex and repackage it as tensorflow-gpu
       - run: |
-          git clone https://github.com/OCR-D/ocrd_all /tmp/ocrd_all && \
-          make -f <(echo new:; echo ' $(pip_install_tf1nvidia)') -f /tmp/ocrd_all/Makefile new SEMPIP=
+          pushd /tmp/ocrd_all
+          git clone https://github.com/OCR-D/ocrd_all
+          make -f <(echo new:; echo ' $(pip_install_tf1nvidia)') -f Makefile new SEMPIP=
       - checkout
       - run: make deps
       - run: make install
