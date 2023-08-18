@@ -30,23 +30,23 @@ def ocrd_cor_asv_ann_align(*args, **kwargs):
     return ocrd_cli_wrap_processor(AlignLines, *args, **kwargs)
 
 class AlignLines(Processor):
-    
+
     def __init__(self, *args, **kwargs):
         kwargs['ocrd_tool'] = OCRD_TOOL['tools'][TOOL_NAME]
         kwargs['version'] = OCRD_TOOL['version']
         super().__init__(*args, **kwargs)
-        
+
     def process(self):
         """Align textlines of multiple file groups and choose the 'best' characters.
-        
+
         Find files in all input file groups of the workspace for the same
-        pageIds.
-        
+        physical pages.
+
         Open and deserialise PAGE input files, then iterate over the element
         hierarchy down to the TextLine level, looking at each first TextEquiv.
         Align character sequences in all pairs of lines for the same TextLine IDs,
         and for each position pick the 'best' character hypothesis among the inputs.
-        
+
         \b
         Choice depends on ``method``:
         - if `majority`, then use a majority rule over the inputs
@@ -55,14 +55,16 @@ class AlignLines(Processor):
           (requires input with per-character or per-line confidence annotations),
         - if `combined`, then try a heuristic combination of both approaches
           (requires both conditions).
-        
+
         Then concatenate those character choices to new TextLines (without
-        segmentation at lower levels).
-        
+        segmentation at lower levels). The first input file group is priviledged
+        in that it will be the reference for the output (i.e. its segmentation
+        and non-textual attributes will be kept).
+
         Finally, make the parent regions (higher levels) consistent with that
         textual result (via concatenation joined by whitespace), and remove the
         child words/glyphs (lower levels) altogether.
-        
+
         Produce new output files by serialising the resulting hierarchy.
         """
         #assert_file_grp_cardinality(self.input_file_grp, >=1)
@@ -71,7 +73,7 @@ class AlignLines(Processor):
         LOG = getLogger('processor.AlignLines')
 
         method = self.parameter['method']
-        
+
         ifgs = self.input_file_grp.split(",") # input file groups
         ninputs = len(ifgs)
         if ninputs < 2:
@@ -81,34 +83,42 @@ class AlignLines(Processor):
         ifts = self.zip_input_files(mimetype=MIMETYPE_PAGE) # input file tuples
 
         self.aligner = Alignment(logger=LOG)
-        
-        # get input files:
+
+        # get input files for each page:
         for ift in ifts:
-            # get input lines:
-            file_line2seq = [{} for _ in ifgs] # line dicts for this file
-            file_id2line = [{} for _ in ifgs] # line ID dicts for this file
+            if not ift[0]:
+                LOG.error("no file in first input fileGrp for page %s - skipping", next(filter(None, ift)).pageId)
+                continue
+            output_pcgts = None
+            # get input lines for each input file:
+            file_line2seq = [{} for _ in ifgs] # line content dicts for this page
+            file_id2line = [{} for _ in ifgs] # line ID dicts for this page
             for i, input_file in enumerate(ift):
                 if not input_file:
                     # file/page was not found in this group
                     continue
+                if not output_pcgts:
+                    LOG.info("processing page %s", input_file.pageId)
                 LOG.info("INPUT FILE for %s: %s", ifgs[i], input_file.ID)
                 pcgts = page_from_file(self.workspace.download_file(input_file))
                 file_line2seq[i] = page_get_line_sequences(pcgts)
-                file_id2line[i] = {line.id: line
-                                   for line in file_line2seq[i]}
-                if not i:
+                file_id2line[i] = {line.id: line for line in file_line2seq[i]}
+                if not output_pcgts:
                     # first input fileGrp becomes base for output fileGrp
                     output_pcgts = pcgts
                     self.add_metadata(output_pcgts)
 
             for line_id in file_id2line[0]:
-                # get line objects among all input files for this line ID
+                # get line object for each input file for this line ID
                 lines = [id2line.get(line_id, None) for id2line in file_id2line]
                 line0 = lines[0]
                 # get line texts among all input files for this line ID
                 seqs = [line2seq[line] for line, line2seq in zip(lines, file_line2seq)
                         # ignore missing lines and empty lines
                         if line in line2seq and line2seq[line][0]]
+                # todo: we should try to reconstruct the segmentation below line level
+                #       from the alignment results; so here we would need to keep an
+                #       association of actually available seqs to their TextLine objects
                 nseqs = len(seqs)
                 if not nseqs:
                     continue
@@ -276,7 +286,7 @@ def page_get_line_sequences(pcgts):
     
     Return the stored dictionary.
     '''
-    LOG = getLogger('processor.EvaluateLines')
+    LOG = getLogger('processor.AlignLines')
     result = dict()
     regions = pcgts.get_Page().get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
