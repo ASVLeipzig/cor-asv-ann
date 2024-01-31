@@ -42,8 +42,10 @@ class JoinLines(Processor):
         
         Open and deserialise PAGE input files, then iterate over the element
         hierarchy down to the TextLine level. Concatenate the TextEquivs for
-        all lines with the same TextLine IDs, optionally differentiating them
-        by adding their original fileGrp name in @comments.
+        all lines with the same TextLine IDs (if `match-on=id`) or boundary
+        points (if `match-on=coords`) or baseline points (if `match-on=baseline`).
+        If `add-filegrp-comments` is true, then differentiate them by adding
+        their original fileGrp name in @comments.
         
         Produce new output files by serialising the resulting hierarchy.
         """
@@ -53,6 +55,17 @@ class JoinLines(Processor):
         LOG = getLogger('processor.JoinLines')
 
         comments = self.parameter['add-filegrp-comments']
+        match = self.parameter['match-on']
+        def extract(line):
+            if match == 'id':
+                return line.id
+            if match == 'baseline':
+                if line.Baseline is None:
+                    LOG.error("cannot extract baseline from line '%s'", line.id)
+                    return line.Coords.points
+                return line.Baseline.points
+            if match == 'coords':
+                return line.Coords.points
         
         ifgs = self.input_file_grp.split(",") # input file groups
         ninputs = len(ifgs)
@@ -71,7 +84,8 @@ class JoinLines(Processor):
                     continue
                 LOG.info("INPUT FILE for %s: %s", ifgs[i], input_file.ID)
                 pcgts = page_from_file(self.workspace.download_file(input_file))
-                file_id2line[i] = {line.id: line for line in pcgts.get_Page().get_AllTextLines()}
+                file_id2line[i] = {extract(line): line
+                                   for line in pcgts.get_Page().get_AllTextLines()}
                 if not i:
                     # first input fileGrp becomes base for output fileGrp
                     output_pcgts = pcgts

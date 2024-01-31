@@ -170,6 +170,12 @@
           "type": "boolean",
           "default": false,
           "description": "set @comments of each TextEquiv to the fileGrp it came from"
+        },
+        "match-on": {
+          "type": "string",
+          "enum": ["id", "coords", "baseline"],
+          "default": "id",
+          "description": "information to match lines on (element @id, Coords/@points, Baseline/@points)"
         }
       }
     },
