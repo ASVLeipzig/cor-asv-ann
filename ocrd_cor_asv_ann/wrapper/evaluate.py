@@ -113,26 +113,28 @@ class EvaluateLines(Processor):
                                     line_id, input_file.ID, gt_len, ocr_len)
                     if metric == 'Levenshtein-fast':
                         # not exact (but fast): codepoints
-                        cdist = self.caligners[i].get_levenshtein_distance(ocr_line, gt_line)
-                        wdist = self.waligners[i].get_levenshtein_distance(ocr_words, gt_words)
+                        cdist, clen = self.caligners[i].get_levenshtein_distance(ocr_line, gt_line)
+                        wdist, wlen = self.waligners[i].get_levenshtein_distance(ocr_words, gt_words)
                     else:
                         # exact (but slow): grapheme clusters
-                        cdist = self.caligners[i].get_adjusted_distance(ocr_line, gt_line,
-                                                                        # Levenshtein / NFC / NFKC / historic_latin
-                                                                        normalization=metric,
-                                                                        gtlevel=gtlevel)
-                        wdist = self.waligners[i].get_adjusted_distance(ocr_words, gt_words,
-                                                                        # Levenshtein / NFC / NFKC / historic_latin
-                                                                        normalization=metric,
-                                                                        gtlevel=gtlevel)
+                        cdist, clen = self.caligners[i].get_adjusted_distance(
+                            ocr_line, gt_line,
+                            # Levenshtein / NFC / NFKC / historic_latin
+                            normalization=metric,
+                            gtlevel=gtlevel)
+                        wdist, wlen = self.waligners[i].get_adjusted_distance(
+                            ocr_words, gt_words,
+                            # Levenshtein / NFC / NFKC / historic_latin
+                            normalization=metric,
+                            gtlevel=gtlevel)
                     # align and accumulate edit counts for lines:
-                    file_cedits[i].add(cdist, ocr_line, gt_line)
-                    file_wedits[i].add(wdist, ocr_words, gt_words)
+                    file_cedits[i].add(cdist, clen, ocr_line, gt_line)
+                    file_wedits[i].add(wdist, wlen, ocr_words, gt_words)
                     # todo: maybe it could be useful to retrieve and store the alignments, too
                     lines.append({line_id: {
                         'char-length': gt_len,
-                        'char-error-rate': cdist,
-                        'word-error-rate': wdist,
+                        'char-error-rate': cdist / clen if clen else 0,
+                        'word-error-rate': wdist / wlen if wlen else 0,
                         'gt': gt_line,
                         'ocr': ocr_line}})
             
@@ -150,7 +152,9 @@ class EvaluateLines(Processor):
                          input_file.pageId, ifgs[0], ifgs[i])
                 pair = ifgs[0] + ',' + ifgs[i]
                 report[pair] = {}
-                report[pair]['num-lines'] = file_cedits[i].length
+                report[pair]['num-lines'] = file_cedits[i].steps
+                report[pair]['num-words'] = file_wedits[i].length
+                report[pair]['num-chars'] = file_cedits[i].length
                 report[pair]['char-error-rate-mean'] = file_cedits[i].mean
                 report[pair]['char-error-rate-varia'] = file_cedits[i].varia
                 report[pair]['word-error-rate-mean'] = file_wedits[i].mean
@@ -182,7 +186,9 @@ class EvaluateLines(Processor):
                      wedits[i].mean, math.sqrt(wedits[i].varia),
                      ifgs[0], ifgs[i])
             report[ifgs[0] + ',' + ifgs[i]] = {
-                'num-lines': cedits[i].length,
+                'num-lines': cedits[i].steps,
+                'num-words': wedits[i].length,
+                'num-chars': cedits[i].length,
                 'char-error-rate-mean': cedits[i].mean,
                 'char-error-rate-varia': cedits[i].varia,
                 'word-error-rate-mean': wedits[i].mean,

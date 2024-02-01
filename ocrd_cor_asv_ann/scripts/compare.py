@@ -89,25 +89,27 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
                             str(line_id), ocr_file, gt_len, ocr_len)
             if normalization == 'Levenshtein-fast':
                 # not exact (but fast): codepoints
-                cdist = caligners[i].get_levenshtein_distance(ocr_line, gt_line)
-                wdist = waligners[i].get_levenshtein_distance(ocr_words, gt_words)
+                cdist, clen = caligners[i].get_levenshtein_distance(ocr_line, gt_line)
+                wdist, wlen = waligners[i].get_levenshtein_distance(ocr_words, gt_words)
             else:
                 # exact (but slow): grapheme clusters
-                cdist = caligners[i].get_adjusted_distance(ocr_line, gt_line,
-                                                           # Levenshtein / NFC / NFKC / historic_latin
-                                                           normalization=normalization,
-                                                           gtlevel=gt_level)
-                wdist = waligners[i].get_adjusted_distance(ocr_words, gt_words,
-                                                           # Levenshtein / NFC / NFKC / historic_latin
-                                                           normalization=normalization,
-                                                           gtlevel=gt_level)
+                cdist, clen = caligners[i].get_adjusted_distance(
+                    ocr_line, gt_line,
+                    # Levenshtein / NFC / NFKC / historic_latin
+                    normalization=normalization,
+                    gtlevel=gt_level)
+                wdist, wlen = waligners[i].get_adjusted_distance(
+                    ocr_words, gt_words,
+                    # Levenshtein / NFC / NFKC / historic_latin
+                    normalization=normalization,
+                    gtlevel=gt_level)
             _, conf = Alignment.best_alignment(ocr_line, gt_line, True)
-            cedits[i].add(cdist, ocr_line, gt_line)
-            wedits[i].add(wdist, ocr_words, gt_words)
+            cedits[i].add(cdist, clen, ocr_line, gt_line)
+            wedits[i].add(wdist, wlen, ocr_words, gt_words)
             lines.append({line_id: {
                 'char-length': gt_len,
-                'char-error-rate': cdist,
-                'word-error-rate': wdist,
+                'char-error-rate': cdist / clen if clen else 0,
+                'word-error-rate': wdist / wlen if wlen else 0,
                 'gt': gt_line,
                 'ocr': ocr_line,
                 'edits': repr(conf)}})
@@ -117,7 +119,9 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
                  cedits[i].mean, math.sqrt(cedits[i].varia),
                  wedits[i].mean, math.sqrt(wedits[i].varia),
                  ocr_file, gt_file)
-        report[pair]['num-lines'] = cedits[i].length
+        report[pair]['num-lines'] = cedits[i].steps
+        report[pair]['num-words'] = wedits[i].length
+        report[pair]['num-chars'] = cedits[i].length
         report[pair]['char-error-rate-mean'] = cedits[i].mean
         report[pair]['char-error-rate-varia'] = cedits[i].varia
         report[pair]['word-error-rate-mean'] = wedits[i].mean

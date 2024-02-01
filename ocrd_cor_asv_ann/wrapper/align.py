@@ -122,7 +122,7 @@ class AlignLines(Processor):
                     for j, charseq2 in enumerate(charseqs[i+1:], i+1):
                         disti = distances.setdefault(i, dict())
                         aligni = alignments.setdefault(i, dict())
-                        disti[j], aligni[j] = self.aligner.get_adjusted_distance(
+                        disti[j], _, aligni[j] = self.aligner.get_adjusted_distance(
                             charseq1, charseq2,
                             normalization=None, gtlevel=1,
                             return_alignment=True)

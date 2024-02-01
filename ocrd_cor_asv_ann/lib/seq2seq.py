@@ -712,36 +712,23 @@ class Sequence2Sequence(object):
                 
                 #metric = get_levenshtein_distance
 
-                c_origin_dist = c_origin_aligner.get_adjusted_distance(lines_source[j], lines_target[j],
-                                                                       normalization=normalization,
-                                                                       gtlevel=gt_level)
-                c_greedy_dist = c_greedy_aligner.get_adjusted_distance(greedy_lines[j], target_lines[j],
-                                                                       normalization=normalization,
-                                                                       gtlevel=gt_level)
-                c_beamed_dist = c_beamed_aligner.get_adjusted_distance(beamed_lines[j], target_lines[j],
-                                                                       normalization=normalization,
-                                                                       gtlevel=gt_level)
-                c_origin_counts.add(c_origin_dist, lines_source[j], lines_target[j])
-                c_greedy_counts.add(c_greedy_dist, lines_greedy[j], lines_target[j])
-                c_beamed_counts.add(c_beamed_dist, lines_beamed[j], lines_target[j])
+                def get_counts(aligner, line_source, line_target):
+                    dist, length = aligner.get_adjusted_distance(
+                        line_source, line_target, normalization=normalization, gtlevel=gt_level)
+                    return dist, length, line_source, line_target
+
+                c_origin_counts.add(get_counts(c_origin_aligner, lines_source[j], lines_target[j]))
+                c_greedy_counts.add(get_counts(c_greedy_aligner, lines_greedy[j], lines_target[j]))
+                c_beamed_counts.add(get_counts(c_beamed_aligner, lines_beamed[j], lines_target[j]))
                 
                 tokens_greedy = lines_greedy[j].split(" ")
                 tokens_beamed = lines_beamed[j].split(" ")
                 tokens_source = lines_source[j].split(" ")
                 tokens_target = lines_target[j].split(" ")
                 
-                w_origin_dist = w_origin_aligner.get_adjusted_distance(tokens_source, tokens_target,
-                                                                       normalization=normalization,
-                                                                       gtlevel=gt_level)
-                w_greedy_dist = w_greedy_aligner.get_adjusted_distance(tokens_greedy, tokens_target,
-                                                                       normalization=normalization,
-                                                                       gtlevel=gt_level)
-                w_beamed_dist = w_beamed_aligner.get_adjusted_distance(tokens_beamed, tokens_target,
-                                                                       normalization=normalization,
-                                                                       gtlevel=gt_level)
-                w_origin_counts.add(w_origin_dist, tokens_source, tokens_target)
-                w_greedy_counts.add(w_greedy_dist, tokens_greedy, tokens_target)
-                w_beamed_counts.add(w_beamed_dist, tokens_beamed, tokens_target)
+                w_origin_counts.add(get_counts(w_origin_aligner, tokens_source, tokens_target))
+                w_greedy_counts.add(get_counts(w_greedy_aligner, tokens_greedy, tokens_target))
+                w_beamed_counts.add(get_counts(w_beamed_aligner, tokens_beamed, tokens_target))
                 
             c_greedy_counts.score += sum(scores_greedy)
             c_beamed_counts.score += sum(scores_beamed)

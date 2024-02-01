@@ -170,7 +170,7 @@ class Alignment():
         # this underestimates the alignment path length (which
         # we cannot get from the library)
         length = max(len(target_text), len(source_text))
-        return dist/length if length else 0
+        return dist, length
     
     def get_adjusted_distance(self, source_text, target_text, normalization=None, gtlevel=1, return_alignment=False):
         """Normalize and align strings, recombining characters, and calculate unweighted edit distance.
@@ -345,10 +345,9 @@ class Alignment():
                 dist += 1.0
         length = len(alignment)
 
-        rate = dist / length if length else 0
         if return_alignment:
-            return rate, alignment
-        return rate
+            return dist, length, alignment
+        return dist, length
     
     @staticmethod
     def best_alignment(source_text, target_text, with_confusion=False):
@@ -361,7 +360,7 @@ class Alignment():
 class Edits():
     length = mean = varia = 0
     score = 0
-    lines = 0
+    steps = 0
     hist1 = None
     hist2 = None
     def __init__(self, logger=None, histogram=False):
@@ -373,6 +372,10 @@ class Edits():
             self.hist1 = dict()
             self.hist2 = dict()
 
+    def __repr__(self):
+        return 'N=%d µ=%.2f σ²=%.2f' % (
+            self.length, self.mean, self.varia)
+
     def hist(self):
         keys = set(self.hist1.keys()).union(self.hist2.keys())
         bits = dict([(key, (self.hist1.get(key, 0), self.hist2.get(key, 0)))
@@ -380,25 +383,26 @@ class Edits():
         return bits
     
     # numerically stable parallel/subsample aggregation algorithm by Chan et al. 1979:
-    def update(self, length, mean, varia, hist1, hist2):
+    def update(self, steps, length, mean, varia, hist1, hist2):
         if length < 1:
             return
+        self.steps += steps
         delta = mean - self.mean
         self.mean = (length * mean + self.length * self.mean) / (length + self.length)
         self.varia = (length * varia + self.length * self.varia +
                       delta ** 2 * length * self.length / (length + self.length))
         self.length += length
         self.varia /= self.length
-        logging.getLogger('').debug('N=%d→%d µ=%.2f→%.2f σ²=%.2f→%.2f',
-                                    length, self.length,
-                                    mean, self.mean,
-                                    varia, self.varia)
+        self.logger.debug('N=%d→%d µ=%.2f→%.2f σ²=%.2f→%.2f',
+                          length, self.length,
+                          mean, self.mean,
+                          varia, self.varia)
         for tok in hist1:
             self.hist1[tok] = hist1[tok] + self.hist1.setdefault(tok, 0)
         for tok in hist2:
             self.hist2[tok] = hist2[tok] + self.hist2.setdefault(tok, 0)
     
-    def add(self, dist, seq1, seq2):
+    def add(self, dist, length, seq1, seq2):
         hist1 = dict()
         hist2 = dict()
         if self.hist1:
@@ -407,7 +411,7 @@ class Edits():
         if self.hist2:
             for tok in seq2:
                 hist2[tok] = 1 + hist2.setdefault(tok, 0)
-        self.update(1, dist, 0, hist1, hist2)
+        self.update(1, length, dist / length if length else 0, 0, hist1, hist2)
     
     def merge(self, edits):
-        self.update(edits.length, edits.mean, edits.varia, edits.hist1, edits.hist2)
+        self.update(edits.steps, edits.length, edits.mean, edits.varia, edits.hist1, edits.hist2)
