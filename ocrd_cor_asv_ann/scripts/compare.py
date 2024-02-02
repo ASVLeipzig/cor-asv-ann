@@ -8,7 +8,7 @@ import click
 from ocrd_models.ocrd_page import parse, parseString
 from ocrd_utils import initLogging
 
-from ..lib.alignment import Alignment, Edits
+from ..lib.alignment import Alignment, Edits, splitwords
 from ..wrapper.evaluate import page_get_lines
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
@@ -80,10 +80,10 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
                 continue
             gt_line = gt_lines[line_id].strip()
             gt_len = len(gt_line)
-            gt_words = gt_line.split()
+            gt_words = splitwords(gt_line)
             ocr_line = ocr_lines[line_id].strip()
             ocr_len = len(ocr_line)
-            ocr_words = ocr_line.split()
+            ocr_words = splitwords(ocr_line)
             if 0.2 * (gt_len + ocr_len) < math.fabs(gt_len - ocr_len) > 5:
                 LOG.warning('line "%s" in file "%s" deviates significantly in length (%d vs %d)',
                             str(line_id), ocr_file, gt_len, ocr_len)

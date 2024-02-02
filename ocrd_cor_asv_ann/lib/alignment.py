@@ -2,6 +2,7 @@
 import logging
 import bisect
 import unicodedata
+import uniseg.wordbreak
 
 class Alignment():
     def __init__(self, gap_element=0, logger=None, confusion=False):
@@ -189,7 +190,6 @@ class Alignment():
         
         Return the arithmetic mean of the distances.
         """
-        import unicodedata
         def normalize(seq):
             if isinstance(seq, list):
                 return list(map(normalize, seq))
@@ -415,3 +415,30 @@ class Edits():
     
     def merge(self, edits):
         self.update(edits.steps, edits.length, edits.mean, edits.varia, edits.hist1, edits.hist2)
+
+def _words(text):
+    """segment a text into words"""
+    # stolen from dinglehopper
+
+    # Check if c is an unwanted character, i.e. whitespace, punctuation, or similar
+    def unwanted(c):
+        # See https://www.fileformat.info/info/unicode/category/index.htm
+        # and https://unicodebook.readthedocs.io/unicode.html#categories
+        unwanted_categories = "O", "M", "P", "Z", "S"
+        unwanted_subcategories = "Cc", "Cf"
+
+        subcat = unicodedata.category(c)
+        cat = subcat[0]
+        return cat in unwanted_categories or subcat in unwanted_subcategories
+
+    # We follow Unicode Standard Annex #29 on Unicode Text Segmentation here: Split on
+    # word boundaries using uniseg.wordbreak.words() and ignore all "words" that contain
+    # only whitespace, punctation "or similar characters."
+    for word in uniseg.wordbreak.words(text):
+        if all(unwanted(c) for c in word):
+            pass
+        else:
+            yield word
+
+def splitwords(text):
+    return list(_words(text))

@@ -16,7 +16,7 @@ from ocrd_utils import (
 from ocrd_modelfactory import page_from_file
 
 from .config import OCRD_TOOL
-from ..lib.alignment import Alignment, Edits
+from ..lib.alignment import Alignment, Edits, splitwords
 
 TOOL_NAME = 'ocrd-cor-asv-ann-evaluate'
 
@@ -104,10 +104,10 @@ class EvaluateLines(Processor):
                         continue
                     gt_line = file_lines[0][line_id]
                     gt_len = len(gt_line)
-                    gt_words = gt_line.split()
+                    gt_words = splitwords(gt_line)
                     ocr_line = file_lines[i][line_id]
                     ocr_len = len(ocr_line)
-                    ocr_words = ocr_line.split()
+                    ocr_words = splitwords(ocr_line)
                     if 0.2 * (gt_len + ocr_len) < math.fabs(gt_len - ocr_len) > 5:
                         LOG.warning('line "%s" in file "%s" deviates significantly in length (%d vs %d)',
                                     line_id, input_file.ID, gt_len, ocr_len)

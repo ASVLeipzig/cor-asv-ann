@@ -6,7 +6,7 @@ import pickle
 import numpy as np
 import h5py
 
-from .alignment import Alignment, Edits
+from .alignment import Alignment, Edits, splitwords
 
 GAP = '\a' # reserved character that does not get mapped (for gap repairs)
 
@@ -721,10 +721,10 @@ class Sequence2Sequence(object):
                 c_greedy_counts.add(get_counts(c_greedy_aligner, lines_greedy[j], lines_target[j]))
                 c_beamed_counts.add(get_counts(c_beamed_aligner, lines_beamed[j], lines_target[j]))
                 
-                tokens_greedy = lines_greedy[j].split(" ")
-                tokens_beamed = lines_beamed[j].split(" ")
-                tokens_source = lines_source[j].split(" ")
-                tokens_target = lines_target[j].split(" ")
+                tokens_greedy = splitwords(lines_greedy[j])
+                tokens_beamed = splitwords(lines_beamed[j])
+                tokens_source = splitwords(lines_source[j])
+                tokens_target = splitwords(lines_target[j])
                 
                 w_origin_counts.add(get_counts(w_origin_aligner, tokens_source, tokens_target))
                 w_greedy_counts.add(get_counts(w_greedy_aligner, tokens_greedy, tokens_target))
