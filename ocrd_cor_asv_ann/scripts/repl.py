@@ -31,7 +31,11 @@ def cli():
     
     s2s = Sequence2Sequence(logger=logging.getLogger(__name__), progbars=True)
     def transcode_line(source_line):
-        from matplotlib import pyplot, gridspec, font_manager
+        try:
+            from matplotlib import pyplot, gridspec, font_manager
+            plotting = True
+        except ModuleNotFoundError:
+            plotting = False
         class Formatter(object):
             def __init__(self, ax):
                 self.ax = ax
@@ -52,49 +56,51 @@ def cli():
                     ylabel = 'unknown'
                 return '%s|%s' % (xlabel, ylabel)
         encoder_input_data, _, _, _ = s2s.vectorize_lines([source_line + '\n'], [source_line + '\n'])
-        gs = gridspec.GridSpec(2, 2, width_ratios=[5, 1])
-        prop = font_manager.FontProperties(family=[
-            # we most likely need glyphs for historic Latin codepoints:
-            'FreeMono',
-            'STIXGeneral',
-            'monospace'])
         target_line, prob, score, alignments = s2s.decode_sequence_greedy(encoder_input_data[0])
-        ax1 = pyplot.subplot(gs[0])
-        im1 = pyplot.imshow(np.squeeze(np.array(alignments)))
-        pyplot.xticks(np.arange(len(source_line)), list(source_line), fontproperties=prop)
-        pyplot.yticks(np.arange(len(target_line)), list(target_line), fontproperties=prop)
-        ax1.yaxis.tick_right()
-        ax1.format_coord = Formatter(ax1)
-        pyplot.title('alignment')
-        pyplot.colorbar(im1, ax=ax1)
-        ax2 = pyplot.subplot(gs[1], sharey=ax1, xticks=[])
-        im2 = pyplot.imshow(np.array(prob)[:, np.newaxis], cmap="plasma")
-        pyplot.title('probs')
-        pyplot.colorbar(im2, ax=ax2)
-        pyplot.annotate('cor-asv-ann greedy (ppl=%.2f)' % np.exp(score), xy=(0.5, 0.98), xycoords='figure fraction')
+        if plotting:
+            gs = gridspec.GridSpec(2, 2, width_ratios=[5, 1])
+            prop = font_manager.FontProperties(family=[
+                # we most likely need glyphs for historic Latin codepoints:
+            'FreeMono',
+                'STIXGeneral',
+                'monospace'])
+            ax1 = pyplot.subplot(gs[0])
+            im1 = pyplot.imshow(np.squeeze(np.array(alignments)))
+            pyplot.xticks(np.arange(len(source_line)), list(source_line), fontproperties=prop)
+            pyplot.yticks(np.arange(len(target_line)), list(target_line), fontproperties=prop)
+            ax1.yaxis.tick_right()
+            ax1.format_coord = Formatter(ax1)
+            pyplot.title('alignment')
+            pyplot.colorbar(im1, ax=ax1)
+            ax2 = pyplot.subplot(gs[1], sharey=ax1, xticks=[])
+            im2 = pyplot.imshow(np.array(prob)[:, np.newaxis], cmap="plasma")
+            pyplot.title('probs')
+            pyplot.colorbar(im2, ax=ax2)
+            pyplot.annotate('cor-asv-ann greedy (ppl=%.2f)' % np.exp(score), xy=(0.5, 0.98), xycoords='figure fraction')
         target_line, prob, score, alignments = next(s2s.decode_sequence_beam(encoder_input_data[0]))
         alignments = np.squeeze(np.array(alignments))
-        ax3 = pyplot.subplot(gs[2], sharex=ax1)
-        im3 = pyplot.imshow(np.where(alignments == 1.0, np.nan, alignments))
-        im3.cmap.set_bad('red')
-        pyplot.xticks(np.arange(len(source_line)), list(source_line), fontproperties=prop)
-        pyplot.yticks(np.arange(len(target_line)), list(target_line), fontproperties=prop)
-        ax3.yaxis.tick_right()
-        ax3.format_coord = Formatter(ax3)
-        pyplot.title('alignment')
-        cb3 = pyplot.colorbar(im3, ax=ax3)
-        #cb3.set_ticks(cb3.get_ticks() + [1.0])
-        #cb3.ax.set_yticklabels([x.get_text() for x in cb3.ax.get_yticklabels()] + ['rejection'])
-        cb3.ax.yaxis.get_ticklabels(which='both')[-1].set_text('rejection')
-        ax4 = pyplot.subplot(gs[3], sharey=ax3, xticks=[])
-        im4 = pyplot.imshow(np.array(prob)[:, np.newaxis], cmap="plasma")
-        pyplot.title('probs')
-        cb4 = pyplot.colorbar(im4, ax=ax4)
-        #cb4.set_ticks(cb4.get_ticks() + [s2s.rejection_threshold])
-        #cb4.ax.set_yticklabels([x.get_text() for x in cb4.ax.get_yticklabels(which='both')] + ['rejection_threshold'])
-        cb4.ax.yaxis.get_ticklabels(which='both')[-1].set_text('rejection_threshold')
-        pyplot.annotate('cor-asv-ann beamed (ppl=%.2f)' % np.exp(score), xy=(0.5, 0.48), xycoords='figure fraction')
-        pyplot.show() # wait for user
+        if plotting:
+            ax3 = pyplot.subplot(gs[2], sharex=ax1)
+            im3 = pyplot.imshow(np.where(alignments == 1.0, np.nan, alignments))
+            im3.cmap.set_bad('red')
+            pyplot.xticks(np.arange(len(source_line)), list(source_line), fontproperties=prop)
+            pyplot.yticks(np.arange(len(target_line)), list(target_line), fontproperties=prop)
+            ax3.yaxis.tick_right()
+            ax3.format_coord = Formatter(ax3)
+            pyplot.title('alignment')
+            cb3 = pyplot.colorbar(im3, ax=ax3)
+            #cb3.set_ticks(cb3.get_ticks() + [1.0])
+            #cb3.ax.set_yticklabels([x.get_text() for x in cb3.ax.get_yticklabels()] + ['rejection'])
+            cb3.ax.yaxis.get_ticklabels(which='both')[-1].set_text('rejection')
+            ax4 = pyplot.subplot(gs[3], sharey=ax3, xticks=[])
+            im4 = pyplot.imshow(np.array(prob)[:, np.newaxis], cmap="plasma")
+            pyplot.title('probs')
+            cb4 = pyplot.colorbar(im4, ax=ax4)
+            #cb4.set_ticks(cb4.get_ticks() + [s2s.rejection_threshold])
+            #cb4.ax.set_yticklabels([x.get_text() for x in cb4.ax.get_yticklabels(which='both')] + ['rejection_threshold'])
+            cb4.ax.yaxis.get_ticklabels(which='both')[-1].set_text('rejection_threshold')
+            pyplot.annotate('cor-asv-ann beamed (ppl=%.2f)' % np.exp(score), xy=(0.5, 0.48), xycoords='figure fraction')
+            pyplot.show() # wait for user
         return target_line, score
     def unvectorize(data):
         lines = []
