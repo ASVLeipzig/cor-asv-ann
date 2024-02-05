@@ -1,6 +1,6 @@
 {
   "git_url": "https://github.com/ASVLeipzig/cor-asv-ann",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "tools": {
     "ocrd-cor-asv-ann-process": {
       "executable": "ocrd-cor-asv-ann-process",
@@ -88,6 +88,12 @@
         "OCR-D-EVAL-CER"
       ],
       "parameters": {
+        "match_on": {
+          "type": "string",
+          "enum": ["index", "id", "coords", "baseline"],
+          "default": "id",
+          "description": "Attribute to differentiate input annotations by: either `TextEquiv/@index` of the same TextLine and input file, or `TextLine/@id` (or `./Coords/@points` or `./Baseline/@points`) of input files across input fileGrps."
+        },
         "metric": {
           "type": "string",
           "enum": ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC", "historic_latin"],
