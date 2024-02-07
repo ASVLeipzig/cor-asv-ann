@@ -135,9 +135,9 @@ class EvaluateLines(Processor):
                     if not i:
                         continue
                     if match == 'index':
-                        pair = '0,%d' % i
+                        pair = '%d,0' % i
                     else:
-                        pair = ifgs[0] + ',' + ifgs[i]
+                        pair = ifgs[i] + ',' + ifgs[0]
                         input_file = ift[i]
                     lines = report.setdefault(pair, dict()).setdefault('lines', list())
                     if not input_lines or not input_file:
@@ -192,9 +192,9 @@ class EvaluateLines(Processor):
                     # file/page was not found in this group
                     continue
                 if match == 'index':
-                    pair = '0,%d' % i
+                    pair = '%d,0' % i
                 else:
-                    pair = ifgs[0] + ',' + ifgs[i]
+                    pair = ifgs[i] + ',' + ifgs[0]
                     input_file = ift[i]
                 LOG.info("%5d lines %.3f±%.3f CER %.3f±%.3f WER %s / %s",
                          file_cedits[i].steps,
@@ -231,10 +231,10 @@ class EvaluateLines(Processor):
                 continue
             if match == 'index':
                 src = 'index %d' % i
-                pair = '0,%d' % i
+                pair = '%d,0' % i
             else:
                 src = ifgs[i]
-                pair = ifgs[0] + ',' + ifgs[i]
+                pair = ifgs[i] + ',' + ifgs[0]
             if not cedits[i].steps:
                 LOG.warning('%s had no textlines whatsoever', src)
                 continue

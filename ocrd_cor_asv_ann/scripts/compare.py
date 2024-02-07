@@ -60,7 +60,7 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
         if not ocr_lines:
             LOG.error("file '%s' contains no text lines to compare", ocr_file)
             continue
-        pair = gt_file + ',' + ocr_file
+        pair = ocr_file + ',' + gt_file
         if isinstance(ocr_lines, dict):
             # from PAGE-XML file
             line_ids = ocr_lines.keys()
