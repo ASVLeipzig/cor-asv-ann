@@ -1,6 +1,7 @@
 SHELL = /bin/bash
 PYTHON ?= python
 PIP ?= pip
+TAG ?= ocrd/cor-asv-ann
 
 # BEGIN-EVAL makefile-parser --make-help Makefile
 
@@ -10,6 +11,7 @@ help:
 	@echo ""
 	@echo "    deps     (install required Python packages)"
 	@echo "    install  (install this Python package)"
+	@echo "    docker   (build Docker image)"
 	@echo ""
 
 # END-EVAL
@@ -30,4 +32,10 @@ deps:
 install: deps
 	$(PIP) install .
 
-.PHONY: help deps install # deps-test test
+docker:
+	docker build \
+	-t $(TAG) \
+	--build-arg VCS_REF=$(git rev-parse --short HEAD) \
+	--build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") .
+
+.PHONY: help deps install docker # deps-test test
