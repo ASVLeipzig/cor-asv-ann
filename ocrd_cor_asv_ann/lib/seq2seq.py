@@ -902,7 +902,7 @@ class Sequence2Sequence(object):
                     # encoder degradation to index zero for learning character underspecification
                     rand = np.random.uniform(0, 1, self.batch_size)
                     line_length = encoder_input_data[0].shape[0]
-                    rand = (line_length * rand / 0.01).astype(np.int) # effective degradation ratio
+                    rand = (line_length * rand / 0.01).astype(int) # effective degradation ratio
                     encoder_input_data[np.arange(self.batch_size)[rand < line_length],
                                        rand[rand < line_length], :] = np.eye(self.voc_size)[0]
                 yield ([encoder_input_data, decoder_input_data],
