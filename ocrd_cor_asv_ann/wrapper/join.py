@@ -44,8 +44,11 @@ class JoinLines(Processor):
         hierarchy down to the TextLine level. Concatenate the TextEquivs for
         all lines with the same TextLine IDs (if `match-on=id`) or boundary
         points (if `match-on=coords`) or baseline points (if `match-on=baseline`).
+
         If `add-filegrp-comments` is true, then differentiate them by adding
         their original fileGrp name in @comments.
+        If `add-filegrp-index` is true, then differentiate them by adding
+        their original fileGrp index in @index.
         
         Produce new output files by serialising the resulting hierarchy.
         """
@@ -55,6 +58,7 @@ class JoinLines(Processor):
         LOG = getLogger('processor.JoinLines')
 
         comments = self.parameter['add-filegrp-comments']
+        index = self.parameter['add-filegrp-index']
         match = self.parameter['match-on']
         def extract(line):
             if match == 'id':
@@ -95,12 +99,15 @@ class JoinLines(Processor):
                 # get line objects among all input files for this line ID
                 lines = [id2line.get(line_id, None) for id2line in file_id2line]
                 line0 = lines[0]
-                if comments:
-                    for i, line in enumerate(lines):
-                        if not line or not line.TextEquiv:
-                            continue
+                for i, line in enumerate(lines):
+                    if not line or not line.TextEquiv:
+                        continue
+                    if comments:
                         for equiv in line.TextEquiv:
                             equiv.set_comments(ifgs[i])
+                    if index:
+                        for equiv in line.TextEquiv:
+                            equiv.set_index(i)
                 # get line texts among all input files for this line ID
                 texts = itertools.chain.from_iterable(
                     [line.TextEquiv for line in lines

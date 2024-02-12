@@ -175,7 +175,12 @@
         "add-filegrp-comments": {
           "type": "boolean",
           "default": false,
-          "description": "set @comments of each TextEquiv to the fileGrp it came from"
+          "description": "set @comments of each TextEquiv to the fileGrp/@USE it came from"
+        },
+        "add-filegrp-index": {
+          "type": "boolean",
+          "default": false,
+          "description": "set @index of each TextEquiv to the fileGrp index (zero based) it came from"
         },
         "match-on": {
           "type": "string",
