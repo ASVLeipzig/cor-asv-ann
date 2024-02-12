@@ -410,7 +410,7 @@ Pretrained model files are contained in the [models subrepository](https://githu
 
 
 ```
-Usage: ocrd-cor-asv-ann-process [OPTIONS]
+Usage: ocrd-cor-asv-ann-process [worker|server] [OPTIONS]
 
   Improve text annotation by character-level encoder-attention-decoder ANN model
 
@@ -444,24 +444,36 @@ Usage: ocrd-cor-asv-ann-process [OPTIONS]
 
   > Produce new output files by serialising the resulting hierarchy.
 
-Options:
+Subcommands:
+    worker      Start a processing worker rather than do local processing
+    server      Start a processor server rather than do local processing
+
+Options for processing:
+  -m, --mets URL-PATH             URL or file path of METS to process [./mets.xml]
+  -w, --working-dir PATH          Working directory of local workspace [dirname(URL-PATH)]
   -I, --input-file-grp USE        File group(s) used as input
   -O, --output-file-grp USE       File group(s) used as output
-  -g, --page-id ID                Physical page ID(s) to process
+  -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with --page-id, remove only those)
+                                  (with "--page-id", remove only those)
+  --profile                       Enable profiling
+  --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
                                   or JSON file path
   -P, --param-override KEY VAL    Override a single JSON object key-value pair,
                                   taking precedence over --parameter
-  -m, --mets URL-PATH             URL or file path of METS to process
-  -w, --working-dir PATH          Working directory of local workspace
+  -U, --mets-server-url URL       URL of a METS Server for parallel incremental access to METS
+                                  If URL starts with http:// start an HTTP server there,
+                                  otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
-                                  Log level
+                                  Override log level globally [INFO]
+
+Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
   -L, --list-resources            List names of processor resources
-  -J, --dump-json                 Dump tool description as JSON and exit
-  -h, --help                      This help message
+  -J, --dump-json                 Dump tool description as JSON
+  -D, --dump-module-dir           Show the 'module' resource location path for this processor
+  -h, --help                      Show this message
   -V, --version                   Show version
 
 Parameters:
@@ -504,51 +516,79 @@ There are various evaluation [metrics](#Evaluation) available.
 The tool can also aggregate and show the most frequent character confusions.
 
 ```
-Usage: ocrd-cor-asv-ann-evaluate [OPTIONS]
+Usage: ocrd-cor-asv-ann-evaluate [worker|server] [OPTIONS]
 
   Align different textline annotations and compute distance
 
-  > Align textlines of multiple file groups and calculate distances.
+  > Align textlines of alternative annotations and calculate distances
+  > for error rates.
 
-  > Find files in all input file groups of the workspace for the same
-  > pageIds. The first file group serves as reference annotation (ground
-  > truth).
+  > Alternative input annotations derive from either:
+  > - multiple ``TextEquiv/@index`` within one file group and file, or
+  > - multiple file groups (i.e. multiple files for the same page ID, with
+  >   the same TextLine id or coords, using only the first TextEquiv).
+
+  > The first annotation (i.e. index or file group) serves as reference
+  > (ground truth).
 
   > Open and deserialise PAGE input files, then iterate over the element
-  > hierarchy down to the TextLine level, looking at each first
-  > TextEquiv. Align character sequences in all pairs of lines for the
-  > same TextLine IDs, and calculate the distances using the error
-  > metric `metric`. Accumulate distances and sequence lengths per file
-  > group globally and per file, and show each fraction as a CER rate in
-  > the log.
+  > hierarchy down to the TextLine level.
 
-Options:
+  > Now, align character sequences in all pairs of lines for the same 
+  > - TextLine IDs across files (if `match_on=id`) or 
+  > - TextLine boundary points across files (if `match_on=coords`) or 
+  > - TextLine baseline points across files (if `match_on=baseline`) or
+  > - ``TextLine/TextEquiv/@index`` (if `match_on=index`),
+  > and calculate the distances using the error metric `metric`. Accumulate
+  > distances and sequence lengths per file group globally and per file,
+  > and show each fraction as a CER and WER rate in the output JSON reports.
+
+Subcommands:
+    worker      Start a processing worker rather than do local processing
+    server      Start a processor server rather than do local processing
+
+Options for processing:
+  -m, --mets URL-PATH             URL or file path of METS to process [./mets.xml]
+  -w, --working-dir PATH          Working directory of local workspace [dirname(URL-PATH)]
   -I, --input-file-grp USE        File group(s) used as input
   -O, --output-file-grp USE       File group(s) used as output
-  -g, --page-id ID                Physical page ID(s) to process
+  -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with --page-id, remove only those)
+                                  (with "--page-id", remove only those)
+  --profile                       Enable profiling
+  --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
                                   or JSON file path
   -P, --param-override KEY VAL    Override a single JSON object key-value pair,
                                   taking precedence over --parameter
-  -m, --mets URL-PATH             URL or file path of METS to process
-  -w, --working-dir PATH          Working directory of local workspace
+  -U, --mets-server-url URL       URL of a METS Server for parallel incremental access to METS
+                                  If URL starts with http:// start an HTTP server there,
+                                  otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
-                                  Log level
+                                  Override log level globally [INFO]
+
+Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
   -L, --list-resources            List names of processor resources
-  -J, --dump-json                 Dump tool description as JSON and exit
-  -h, --help                      This help message
+  -J, --dump-json                 Dump tool description as JSON
+  -D, --dump-module-dir           Show the 'module' resource location path for this processor
+  -h, --help                      Show this message
   -V, --version                   Show version
 
 Parameters:
+   "match_on" [string - "id"]
+    Attribute to differentiate input annotations by: either
+    `TextEquiv/@index` of the same TextLine and input file, or
+    `TextLine/@id` (or `./Coords/@points` or `./Baseline/@points`) of
+    input files across input fileGrps.
+    Possible values: ["index", "id", "coords", "baseline"]
    "metric" [string - "Levenshtein-fast"]
     Distance metric to calculate and aggregate: `historic_latin` for GT
     level 1-3, `NFKC` for roughly GT level 2 (but including reduction of
     `ſ/s` and superscript numerals etc), `Levenshtein` for GT level 3
-    (or `Levenshtein-fast` for faster alignment but using maximum
-    sequence length instead of path length as CER denominator).
+    (or `Levenshtein-fast` for faster alignment - but using maximum
+    sequence length instead of path length as CER denominator, and
+    without confusion statistics).
     Possible values: ["Levenshtein-fast", "Levenshtein", "NFC", "NFKC",
     "historic_latin"]
    "gt_level" [number - 1]
@@ -560,6 +600,7 @@ Parameters:
     identity) in the end.
    "histogram" [boolean - false]
     Aggregate and show mutual character histograms.
+
 ```
 
 The output file group for the evaluation tool will contain a JSON report of the CER distances of each text line per page, and an aggregated JSON report with the totals and the confusion table. It also makes extensive use of logging.
@@ -571,7 +612,7 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 Inputs could be anything with a textual annotation (`TextEquiv` on the line level), but at least 2 fileGrps (or 3 for `method=majority`). No input will be priviledged regarding text content, but the first input fileGrp will serve as the base annotation for the output.
 
 ```
-Usage: ocrd-cor-asv-ann-align [OPTIONS]
+Usage: ocrd-cor-asv-ann-align [worker|server] [OPTIONS]
 
   Align different textline annotations and pick best
 
@@ -579,7 +620,7 @@ Usage: ocrd-cor-asv-ann-align [OPTIONS]
   > characters.
 
   > Find files in all input file groups of the workspace for the same
-  > pageIds.
+  > physical pages.
 
   > Open and deserialise PAGE input files, then iterate over the element
   > hierarchy down to the TextLine level, looking at each first
@@ -596,7 +637,9 @@ Usage: ocrd-cor-asv-ann-align [OPTIONS]
   >   (requires both conditions).
 
   > Then concatenate those character choices to new TextLines (without
-  > segmentation at lower levels).
+  > segmentation at lower levels). The first input file group is
+  > priviledged in that it will be the reference for the output (i.e.
+  > its segmentation and non-textual attributes will be kept).
 
   > Finally, make the parent regions (higher levels) consistent with
   > that textual result (via concatenation joined by whitespace), and
@@ -604,24 +647,36 @@ Usage: ocrd-cor-asv-ann-align [OPTIONS]
 
   > Produce new output files by serialising the resulting hierarchy.
 
-Options:
+Subcommands:
+    worker      Start a processing worker rather than do local processing
+    server      Start a processor server rather than do local processing
+
+Options for processing:
+  -m, --mets URL-PATH             URL or file path of METS to process [./mets.xml]
+  -w, --working-dir PATH          Working directory of local workspace [dirname(URL-PATH)]
   -I, --input-file-grp USE        File group(s) used as input
   -O, --output-file-grp USE       File group(s) used as output
-  -g, --page-id ID                Physical page ID(s) to process
+  -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with --page-id, remove only those)
+                                  (with "--page-id", remove only those)
+  --profile                       Enable profiling
+  --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
                                   or JSON file path
   -P, --param-override KEY VAL    Override a single JSON object key-value pair,
                                   taking precedence over --parameter
-  -m, --mets URL-PATH             URL or file path of METS to process
-  -w, --working-dir PATH          Working directory of local workspace
+  -U, --mets-server-url URL       URL of a METS Server for parallel incremental access to METS
+                                  If URL starts with http:// start an HTTP server there,
+                                  otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
-                                  Log level
+                                  Override log level globally [INFO]
+
+Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
   -L, --list-resources            List names of processor resources
-  -J, --dump-json                 Dump tool description as JSON and exit
-  -h, --help                      This help message
+  -J, --dump-json                 Dump tool description as JSON
+  -D, --dump-module-dir           Show the 'module' resource location path for this processor
+  -h, --help                      Show this message
   -V, --version                   Show version
 
 Parameters:
@@ -638,7 +693,7 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 Inputs could be anything with a textual annotation (`TextEquiv` on the line level), but at least 2 fileGrps. No input will be priviledged regarding text content, but the first input fileGrp will become the first TextEquiv (which is usually the preferred annotation in OCR-D processors for consumption).
 
 ```
-Usage: ocrd-cor-asv-ann-join [OPTIONS]
+Usage: ocrd-cor-asv-ann-join [worker|server] [OPTIONS]
 
   Join different textline annotations by concatenation
 
@@ -650,34 +705,59 @@ Usage: ocrd-cor-asv-ann-join [OPTIONS]
 
   > Open and deserialise PAGE input files, then iterate over the element
   > hierarchy down to the TextLine level. Concatenate the TextEquivs for
-  > all lines with the same TextLine IDs, optionally differentiating
-  > them by adding their original fileGrp name in @comments.
+  > all lines with the same TextLine IDs (if `match-on=id`) or boundary
+  > points (if `match-on=coords`) or baseline points (if `match-
+  > on=baseline`).
+
+  > If `add-filegrp-comments` is true, then differentiate them by adding
+  > their original fileGrp name in @comments. If `add-filegrp-index` is
+  > true, then differentiate them by adding their original fileGrp index
+  > in @index.
 
   > Produce new output files by serialising the resulting hierarchy.
 
-Options:
+Subcommands:
+    worker      Start a processing worker rather than do local processing
+    server      Start a processor server rather than do local processing
+
+Options for processing:
+  -m, --mets URL-PATH             URL or file path of METS to process [./mets.xml]
+  -w, --working-dir PATH          Working directory of local workspace [dirname(URL-PATH)]
   -I, --input-file-grp USE        File group(s) used as input
   -O, --output-file-grp USE       File group(s) used as output
-  -g, --page-id ID                Physical page ID(s) to process
+  -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with --page-id, remove only those)
+                                  (with "--page-id", remove only those)
+  --profile                       Enable profiling
+  --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
                                   or JSON file path
   -P, --param-override KEY VAL    Override a single JSON object key-value pair,
                                   taking precedence over --parameter
-  -m, --mets URL-PATH             URL or file path of METS to process
-  -w, --working-dir PATH          Working directory of local workspace
+  -U, --mets-server-url URL       URL of a METS Server for parallel incremental access to METS
+                                  If URL starts with http:// start an HTTP server there,
+                                  otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
-                                  Log level
+                                  Override log level globally [INFO]
+
+Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
   -L, --list-resources            List names of processor resources
-  -J, --dump-json                 Dump tool description as JSON and exit
-  -h, --help                      This help message
+  -J, --dump-json                 Dump tool description as JSON
+  -D, --dump-module-dir           Show the 'module' resource location path for this processor
+  -h, --help                      Show this message
   -V, --version                   Show version
 
 Parameters:
    "add-filegrp-comments" [boolean - false]
-    set @comments of each TextEquiv to the fileGrp it came from
+    set @comments of each TextEquiv to the fileGrp/@USE it came from
+   "add-filegrp-index" [boolean - false]
+    set @index of each TextEquiv to the fileGrp index (zero based) it
+    came from
+   "match-on" [string - "id"]
+    information to match lines on (element @id, Coords/@points,
+    Baseline/@points)
+    Possible values: ["id", "coords", "baseline"]
 ```
 
 ### [OCR-D processor](https://ocr-d.de/en/spec/cli) interface `ocrd-cor-asv-ann-mark`
@@ -687,8 +767,6 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 Inputs could be anything with a textual annotation (`TextEquiv` on the word level).
 
 ```
-Usage: ocrd-cor-asv-ann-mark [OPTIONS]
-
   mark words not found by a spellchecker
 
   > Mark words that are not recognized by a spellchecker
@@ -702,24 +780,36 @@ Usage: ocrd-cor-asv-ann-mark [OPTIONS]
 
   > Produce new output files by serialising the resulting hierarchy.
 
-Options:
+Subcommands:
+    worker      Start a processing worker rather than do local processing
+    server      Start a processor server rather than do local processing
+
+Options for processing:
+  -m, --mets URL-PATH             URL or file path of METS to process [./mets.xml]
+  -w, --working-dir PATH          Working directory of local workspace [dirname(URL-PATH)]
   -I, --input-file-grp USE        File group(s) used as input
   -O, --output-file-grp USE       File group(s) used as output
-  -g, --page-id ID                Physical page ID(s) to process
+  -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with --page-id, remove only those)
+                                  (with "--page-id", remove only those)
+  --profile                       Enable profiling
+  --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
                                   or JSON file path
   -P, --param-override KEY VAL    Override a single JSON object key-value pair,
                                   taking precedence over --parameter
-  -m, --mets URL-PATH             URL or file path of METS to process
-  -w, --working-dir PATH          Working directory of local workspace
+  -U, --mets-server-url URL       URL of a METS Server for parallel incremental access to METS
+                                  If URL starts with http:// start an HTTP server there,
+                                  otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
-                                  Log level
+                                  Override log level globally [INFO]
+
+Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
   -L, --list-resources            List names of processor resources
-  -J, --dump-json                 Dump tool description as JSON and exit
-  -h, --help                      This help message
+  -J, --dump-json                 Dump tool description as JSON
+  -D, --dump-module-dir           Show the 'module' resource location path for this processor
+  -h, --help                      Show this message
   -V, --version                   Show version
 
 Parameters:
