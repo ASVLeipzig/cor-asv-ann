@@ -174,8 +174,8 @@ class EvaluateLines(Processor):
                             normalization=metric,
                             gtlevel=gtlevel)
                     # align and accumulate edit counts for lines:
-                    file_cedits[i].add(cdist, clen, ocr_line, gt_line)
-                    file_wedits[i].add(wdist, wlen, ocr_words, gt_words)
+                    file_cedits[i].add(cdist, clen, ocr_line, gt_line, name=line_id)
+                    file_wedits[i].add(wdist, wlen, ocr_words, gt_words, name=line_id)
                     # todo: maybe it could be useful to retrieve and store the alignments, too
                     lines.append({line_id: {
                         'char-length': gt_len,
@@ -209,9 +209,11 @@ class EvaluateLines(Processor):
                 report[pair]['char-error-rate-varia'] = file_cedits[i].varia
                 report[pair]['word-error-rate-mean'] = file_wedits[i].mean
                 report[pair]['word-error-rate-varia'] = file_wedits[i].varia
+                report[pair]['char-error-worst-lines'] = [str(example) for example in file_cedits[i].worst]
+                #report[pair]['word-error-worst-lines'] = [str(example) for example in file_cedits[i].worst]
                 # accumulate edit counts for files
-                cedits[i].merge(file_cedits[i])
-                wedits[i].merge(file_wedits[i])
+                cedits[i].merge(file_cedits[i], name_prefix=input_file.ID + ":")
+                wedits[i].merge(file_wedits[i], name_prefix=input_file.ID + ":")
             
             # write back result to page report
             file_id = make_file_id(ift[0], self.output_file_grp)
@@ -251,6 +253,8 @@ class EvaluateLines(Processor):
                 'char-error-rate-varia': cedits[i].varia,
                 'word-error-rate-mean': wedits[i].mean,
                 'word-error-rate-varia': wedits[i].varia,
+                'char-error-worst-lines': [str(example) for example in cedits[i].worst],
+                #'word-error-worst-lines': [str(example) for example in cedits[i].worst],
             }
             if confusion:
                 conf = caligners[i].get_confusion(confusion)

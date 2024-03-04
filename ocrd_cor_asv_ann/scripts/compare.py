@@ -104,8 +104,8 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
                     normalization=normalization,
                     gtlevel=gt_level)
             _, conf = Alignment.best_alignment(ocr_line, gt_line, True)
-            cedits[i].add(cdist, clen, ocr_line, gt_line)
-            wedits[i].add(wdist, wlen, ocr_words, gt_words)
+            cedits[i].add(cdist, clen, ocr_line, gt_line, name=line_id)
+            wedits[i].add(wdist, wlen, ocr_words, gt_words, name=line_id)
             lines.append({line_id: {
                 'char-length': gt_len,
                 'char-error-rate': cdist / clen if clen else 0,
@@ -126,6 +126,8 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
         report[pair]['char-error-rate-varia'] = cedits[i].varia
         report[pair]['word-error-rate-mean'] = wedits[i].mean
         report[pair]['word-error-rate-varia'] = wedits[i].varia
+        report[pair]['char-error-worst-lines'] = [str(example) for example in cedits[i].worst]
+        #report[pair]['word-error-worst-lines'] = [str(example) for example in cedits[i].worst]
         if confusion:
             if not cedits[i].length:
                 continue

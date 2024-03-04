@@ -1,6 +1,7 @@
 # -*- coding: utf-8
 import logging
-import bisect
+from itertools import chain
+from bisect import bisect_left, insort_left
 import unicodedata
 import uniseg.wordbreak
 
@@ -155,7 +156,7 @@ class Alignment():
                 continue
             conf = Confusion(count, pair)
             length = len(table)
-            idx = bisect.bisect_left(table, conf, hi=min(limit or length, length))
+            idx = bisect_left(table, conf, hi=min(limit or length, length))
             if limit and idx >= limit:
                 continue
             table.insert(idx, conf)
@@ -363,6 +364,34 @@ class Edits():
     steps = 0
     hist1 = None
     hist2 = None
+    worst = None
+    class Example():
+        seq = ''
+        mean = 0
+        length = 0
+        name = ''
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+        def cost(self):
+            # for inverse order (worst first), return negative
+            return - self.mean * self.length
+        def __repr__(self):
+            return (f"{self.name}: " if self.name else "") + \
+                   (f"'{self.seq}' " if self.seq else "") + \
+                   (f"avg={self.mean} len={self.length}")
+        def __lt__(self, other):
+            return self.cost() < other.cost()
+        def __le__(self, other):
+            return self.cost() <= other.cost()
+        def __eq__(self, other):
+            return self.cost() == other.cost()
+        def __ne__(self, other):
+            return self.cost() != other.cost()
+        def __gt__(self, other):
+            return self.cost() > other.cost()
+        def __ge__(self, other):
+            return self.cost() >= other.cost()
+
     def __init__(self, logger=None, histogram=False):
         self.logger = logger or logging.getLogger(__name__)
         if histogram:
@@ -371,6 +400,7 @@ class Edits():
         else:
             self.hist1 = dict()
             self.hist2 = dict()
+        self.worst = list()
 
     def __repr__(self):
         return 'N=%d µ=%.2f σ²=%.2f' % (
@@ -402,7 +432,7 @@ class Edits():
         for tok in hist2:
             self.hist2[tok] = hist2[tok] + self.hist2.setdefault(tok, 0)
     
-    def add(self, dist, length, seq1, seq2):
+    def add(self, dist, length, seq1, seq2, name=None):
         hist1 = dict()
         hist2 = dict()
         if self.hist1:
@@ -412,9 +442,17 @@ class Edits():
             for tok in seq2:
                 hist2[tok] = 1 + hist2.setdefault(tok, 0)
         self.update(1, length, dist / length if length else 0, 0, hist1, hist2)
+        # aggregate outliers
+        insort_left(self.worst, Edits.Example(seq=seq1, mean=dist / length if length else 0, length=length, name=name))
+        # reduce to worst 1% examples
+        self.worst = self.worst[:max(int(self.steps * 0.01), 10)]
     
-    def merge(self, edits):
+    def merge(self, edits, name_prefix=None):
         self.update(edits.steps, edits.length, edits.mean, edits.varia, edits.hist1, edits.hist2)
+        if name_prefix:
+            for example in edits.worst:
+                example.name = name_prefix + example.name
+        self.worst = sorted(chain(self.worst, edits.worst))[:max(int(self.steps * 0.01), 10)]
 
 def _words(text):
     """segment a text into words"""
