@@ -68,7 +68,7 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
             # from plain text file
             line_ids = range(len(ocr_lines))
         for line_id in line_ids:
-            lines = report.setdefault(pair, dict()).setdefault('lines', list())
+            report.setdefault(pair, dict()).setdefault('lines', list())
             if isinstance(gt_lines, dict):
                 has_line = line_id in gt_lines
             else:
@@ -76,7 +76,7 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
             if not has_line:
                 LOG.error("line '%s' in file '%s' is missing from GT file '%s'",
                           str(line_id), ocr_file, gt_file)
-                lines.append({line_id: 'missing'})
+                report[pair]['lines'].append({line_id: 'missing'})
                 continue
             gt_line = gt_lines[line_id].strip()
             gt_len = len(gt_line)
@@ -106,7 +106,7 @@ def cli(output_file, normalization, gt_level, confusion, histogram, file_lists, 
             _, conf = Alignment.best_alignment(ocr_line, gt_line, True)
             cedits[i].add(cdist, clen, ocr_line, gt_line, name=line_id)
             wedits[i].add(wdist, wlen, ocr_words, gt_words, name=line_id)
-            lines.append({line_id: {
+            report[pair]['lines'].append({line_id: {
                 'char-length': gt_len,
                 'char-error-rate': cdist / clen if clen else 0,
                 'word-error-rate': wdist / wlen if wlen else 0,

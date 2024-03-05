@@ -139,14 +139,14 @@ class EvaluateLines(Processor):
                     else:
                         pair = ifgs[i] + ',' + ifgs[0]
                         input_file = ift[i]
-                    lines = report.setdefault(pair, dict()).setdefault('lines', list())
+                    report.setdefault(pair, dict()).setdefault('lines', list())
                     if not input_lines or not input_file:
                         # file/page was not found in this group
                         continue
                     elif line_id not in input_lines:
                         LOG.error('line "%s" in file "%s" is missing from input %d',
                                   line_id, input_file.ID, i)
-                        lines.append({line_id: 'missing'})
+                        report[pair]['lines'].append({line_id: 'missing'})
                         continue
                     gt_line = gt_lines[line_id]
                     gt_len = len(gt_line)
@@ -177,7 +177,7 @@ class EvaluateLines(Processor):
                     file_cedits[i].add(cdist, clen, ocr_line, gt_line, name=line_id)
                     file_wedits[i].add(wdist, wlen, ocr_words, gt_words, name=line_id)
                     # todo: maybe it could be useful to retrieve and store the alignments, too
-                    lines.append({line_id: {
+                    report[pair]['lines'].append({line_id: {
                         'char-length': gt_len,
                         'char-error-rate': cdist / clen if clen else 0,
                         'word-error-rate': wdist / wlen if wlen else 0,
@@ -201,7 +201,6 @@ class EvaluateLines(Processor):
                          file_cedits[i].mean, math.sqrt(file_cedits[i].varia),
                          file_wedits[i].mean, math.sqrt(file_wedits[i].varia),
                          input_file.pageId, pair)
-                report[pair] = {}
                 report[pair]['num-lines'] = file_cedits[i].steps
                 report[pair]['num-words'] = file_wedits[i].length
                 report[pair]['num-chars'] = file_cedits[i].length
