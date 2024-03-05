@@ -366,7 +366,6 @@ class Edits():
     hist2 = None
     worst = None
     class Example():
-        seq = ''
         mean = 0
         length = 0
         name = ''
@@ -377,7 +376,6 @@ class Edits():
             return - self.mean * self.length
         def __repr__(self):
             return (f"{self.name}: " if self.name else "") + \
-                   (f"'{self.seq}' " if self.seq else "") + \
                    (f"avg={self.mean} len={self.length}")
         def __lt__(self, other):
             return self.cost() < other.cost()
@@ -443,7 +441,7 @@ class Edits():
                 hist2[tok] = 1 + hist2.setdefault(tok, 0)
         self.update(1, length, dist / length if length else 0, 0, hist1, hist2)
         # aggregate outliers
-        insort_left(self.worst, Edits.Example(seq=seq1, mean=dist / length if length else 0, length=length, name=name))
+        insort_left(self.worst, Edits.Example(mean=dist / length if length else 0, length=length, name=name))
         # reduce to worst 1% examples
         self.worst = self.worst[:max(int(self.steps * 0.01), 10)]
     
