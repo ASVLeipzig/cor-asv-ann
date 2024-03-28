@@ -204,7 +204,7 @@
         "normalization": {
           "type": "object",
           "default": {},
-          "description": "mapping of characters prior to spellcheck, e.g. {'ſ': 's', 'aͤ': 'ä'}"
+          "description": "mapping of characters prior to spellcheck, e.g. {\"ſ\": \"s\", \"aͤ\": \"ä\"}"
         },
         "format": {
           "type": "string",
