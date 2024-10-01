@@ -1,4 +1,5 @@
-FROM ocrd/core-cuda:v2.62.0 AS base
+ARG DOCKER_BASE_IMAGE
+FROM $DOCKER_BASE_IMAGE
 ARG VCS_REF
 ARG BUILD_DATE
 LABEL \
@@ -8,7 +9,7 @@ LABEL \
     org.label-schema.build-date=$BUILD_DATE
 
 SHELL ["/bin/bash", "-c"]
-WORKDIR /build
+WORKDIR /build/cor-asv-ann
 RUN pip install nvidia-pyindex && \
     pushd $(mktemp -d) && \
     pip download --no-deps "nvidia-tensorflow==1.15.5+nv22.12" && \
@@ -34,7 +35,7 @@ COPY ocrd_cor_asv_ann ./ocrd_cor_asv_ann
 COPY requirements.txt .
 COPY README.md .
 RUN pip install .
-RUN rm -fr /build
+RUN rm -fr /build/cor-asv-ann
 
 WORKDIR /data
 VOLUME ["/data"]
