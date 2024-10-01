@@ -12,7 +12,7 @@ jobs:
       - run: make deps
       - run: make install
 
-  deploy:
+  deploy-docker:
     docker:
       - image: circleci/buildpack-deps:stretch
     steps:
@@ -30,7 +30,9 @@ workflows:
   build-and-test:
     jobs:
       - build-python3
-      - deploy:
+  deploy:
+    jobs:
+      - deploy-docker:
           filters:
             branches:
               only: master
