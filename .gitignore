@@ -12,3 +12,5 @@ env/
 env3/
 TAGS
 /build
+/dist
+/tests/assets

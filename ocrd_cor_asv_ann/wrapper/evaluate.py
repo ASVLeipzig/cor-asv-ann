@@ -31,7 +31,7 @@ class EvaluateLines(Processor):
     @property
     def executable(self):
         return 'ocrd-cor-asv-ann-evaluate'
-        
+
     @property
     def metadata_filename(self) -> str:
         return os.path.join('wrapper', 'ocrd-tool.json')
@@ -91,7 +91,7 @@ class EvaluateLines(Processor):
         report[pair]['word-error-rate-varia'] = wedits[i].varia
         report[pair]['char-error-worst-lines'] = [str(example) for example in cedits[i].worst]
         #report[pair]['word-error-worst-lines'] = [str(example) for example in cedits[i].worst]
-        
+
     def process_workspace(self, workspace: Workspace) -> None:
         self.input_file_grps = self.input_file_grp.split(',')
 
@@ -101,14 +101,14 @@ class EvaluateLines(Processor):
                           for _ in self.input_file_grps]
         self.waligners = [Alignment(logger=self.logger)
                           for _ in self.input_file_grps]
-        
+
         # running edit counts/mean/variance for each file group:
         self.cedits = [Edits(logger=self.logger, histogram=self.parameter['histogram'])
                        for _ in self.input_file_grps]
         self.wedits = [Edits(logger=self.logger)
                        for _ in self.input_file_grps]
         super().process_workspace(workspace)
-            
+
         # report overall results
         report = dict()
         for i in range(len(self.caligners)):

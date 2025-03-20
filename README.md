@@ -455,7 +455,10 @@ Options for processing:
   -O, --output-file-grp USE       File group(s) used as output
   -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with "--page-id", remove only those)
+                                  (with "--page-id", remove only those).
+                                  Short-hand for OCRD_EXISTING_OUTPUT=OVERWRITE
+  --debug                         Abort on any errors with full stack trace.
+                                  Short-hand for OCRD_MISSING_OUTPUT=ABORT
   --profile                       Enable profiling
   --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
@@ -467,6 +470,7 @@ Options for processing:
                                   otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
                                   Override log level globally [INFO]
+  --log-filename LOG-PATH         File to redirect stderr logging to (overriding ocrd_logging.conf).
 
 Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
@@ -554,7 +558,10 @@ Options for processing:
   -O, --output-file-grp USE       File group(s) used as output
   -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with "--page-id", remove only those)
+                                  (with "--page-id", remove only those).
+                                  Short-hand for OCRD_EXISTING_OUTPUT=OVERWRITE
+  --debug                         Abort on any errors with full stack trace.
+                                  Short-hand for OCRD_MISSING_OUTPUT=ABORT
   --profile                       Enable profiling
   --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
@@ -566,6 +573,7 @@ Options for processing:
                                   otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
                                   Override log level globally [INFO]
+  --log-filename LOG-PATH         File to redirect stderr logging to (overriding ocrd_logging.conf).
 
 Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
@@ -600,7 +608,6 @@ Parameters:
     identity) in the end.
    "histogram" [boolean - false]
     Aggregate and show mutual character histograms.
-
 ```
 
 The output file group for the evaluation tool will contain a JSON report of the CER distances of each text line per page, and an aggregated JSON report with the totals and the confusion table. It also makes extensive use of logging.
@@ -658,7 +665,10 @@ Options for processing:
   -O, --output-file-grp USE       File group(s) used as output
   -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with "--page-id", remove only those)
+                                  (with "--page-id", remove only those).
+                                  Short-hand for OCRD_EXISTING_OUTPUT=OVERWRITE
+  --debug                         Abort on any errors with full stack trace.
+                                  Short-hand for OCRD_MISSING_OUTPUT=ABORT
   --profile                       Enable profiling
   --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
@@ -670,6 +680,7 @@ Options for processing:
                                   otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
                                   Override log level globally [INFO]
+  --log-filename LOG-PATH         File to redirect stderr logging to (overriding ocrd_logging.conf).
 
 Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
@@ -727,7 +738,10 @@ Options for processing:
   -O, --output-file-grp USE       File group(s) used as output
   -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with "--page-id", remove only those)
+                                  (with "--page-id", remove only those).
+                                  Short-hand for OCRD_EXISTING_OUTPUT=OVERWRITE
+  --debug                         Abort on any errors with full stack trace.
+                                  Short-hand for OCRD_MISSING_OUTPUT=ABORT
   --profile                       Enable profiling
   --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
@@ -739,6 +753,7 @@ Options for processing:
                                   otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
                                   Override log level globally [INFO]
+  --log-filename LOG-PATH         File to redirect stderr logging to (overriding ocrd_logging.conf).
 
 Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
@@ -767,6 +782,8 @@ To be used with [PAGE-XML](https://github.com/PRImA-Research-Lab/PAGE-XML) docum
 Inputs could be anything with a textual annotation (`TextEquiv` on the word level).
 
 ```
+Usage: ocrd-cor-asv-ann-mark [worker|server] [OPTIONS]
+
   mark words not found by a spellchecker
 
   > Mark words that are not recognized by a spellchecker
@@ -791,7 +808,10 @@ Options for processing:
   -O, --output-file-grp USE       File group(s) used as output
   -g, --page-id ID                Physical page ID(s) to process instead of full document []
   --overwrite                     Remove existing output pages/images
-                                  (with "--page-id", remove only those)
+                                  (with "--page-id", remove only those).
+                                  Short-hand for OCRD_EXISTING_OUTPUT=OVERWRITE
+  --debug                         Abort on any errors with full stack trace.
+                                  Short-hand for OCRD_MISSING_OUTPUT=ABORT
   --profile                       Enable profiling
   --profile-file PROF-PATH        Write cProfile stats to PROF-PATH. Implies "--profile"
   -p, --parameter JSON-PATH       Parameters, either verbatim JSON string
@@ -803,6 +823,7 @@ Options for processing:
                                   otherwise URL is a path to an on-demand-created unix socket
   -l, --log-level [OFF|ERROR|WARN|INFO|DEBUG|TRACE]
                                   Override log level globally [INFO]
+  --log-filename LOG-PATH         File to redirect stderr logging to (overriding ocrd_logging.conf).
 
 Options for information:
   -C, --show-resource RESNAME     Dump the content of processor resource RESNAME
@@ -817,7 +838,7 @@ Parameters:
     external tool to query word forms, e.g. 'hunspell -i utf-8 -d
     de_DE,en_US -w'
    "normalization" [object - {}]
-    mapping of characters prior to spellcheck, e.g. {'ſ': 's', 'aͤ': 'ä'}
+    mapping of characters prior to spellcheck, e.g. {"ſ": "s", "aͤ": "ä"}
    "format" [string - "conf"]
     how unknown words should be marked; if 'conf', then writes
     @conf=0.123, otherwise writes that value into @comments
@@ -826,5 +847,20 @@ Parameters:
 
 ## Testing
 
-not yet!
-...
+Python requirements are in `requirements_test.txt`:
+
+    make deps-test
+	# or...
+	pip install -r requirements_test.txt
+
+Unit tests require downloading/cloning the subrepo [testdata](https://github.com/OCR-D/assets):
+
+    make testdata
+	# or...
+	git submodule update --init testdata
+
+A fresh copy of this must be placed under `tests/assets`. Moreover, we need to download
+at least one model from the subrepo [models](./cor-asv-ann-models). Tests are run by `pytest`:
+
+    make test
+
