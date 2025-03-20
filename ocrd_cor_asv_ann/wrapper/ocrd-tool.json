@@ -11,16 +11,8 @@
         "recognition/post-correction"
       ],
       "description": "Improve text annotation by character-level encoder-attention-decoder ANN model",
-      "input_file_grp": [
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY"
-      ],
-      "output_file_grp": [
-        "OCR-D-COR-ASV"
-      ],
+      "input_file_grp_cardinality": 1,
+      "output_file_grp_cardinality": 1,
       "parameters": {
         "model_file": {
           "type": "string",
@@ -72,21 +64,11 @@
         "Text recognition and optimization"
       ],
       "steps": [
-        "recognition/evaluation"
+        "evaluation/text"
       ],
       "description": "Align different textline annotations and compute distance",
-      "input_file_grp": [
-        "OCR-D-GT-SEG-LINE",
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY",
-        "OCR-D-COR-ASV"
-      ],
-      "output_file_grp": [
-        "OCR-D-EVAL-CER"
-      ],
+      "input_file_grp_cardinality": -1,
+      "output_file_grp_cardinality": 1,
       "parameters": {
         "match_on": {
           "type": "string",
@@ -129,18 +111,8 @@
         "recognition/post-correction"
       ],
       "description": "Align different textline annotations and pick best",
-      "input_file_grp": [
-        "OCR-D-GT-SEG-LINE",
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY",
-        "OCR-D-COR-ASV"
-      ],
-      "output_file_grp": [
-        "OCR-D-OCR-MULTI"
-      ],
+      "input_file_grp_cardinality": [2, -1],
+      "output_file_grp_cardinality": 1,
       "parameters": {
         "method": {
           "type": "string",
@@ -159,18 +131,8 @@
         "recognition/post-correction"
       ],
       "description": "Join different textline annotations by concatenation",
-      "input_file_grp": [
-        "OCR-D-GT-SEG-LINE",
-        "OCR-D-OCR-TESS",
-        "OCR-D-OCR-KRAK",
-        "OCR-D-OCR-OCRO",
-        "OCR-D-OCR-CALA",
-        "OCR-D-OCR-ANY",
-        "OCR-D-COR-ASV"
-      ],
-      "output_file_grp": [
-        "OCR-D-OCR-MULTI"
-      ],
+      "input_file_grp_cardinality": [2, -1],
+      "output_file_grp_cardinality": 1,
       "parameters": {
         "add-filegrp-comments": {
           "type": "boolean",
@@ -195,6 +157,8 @@
       "description": "mark words not found by a spellchecker",
       "steps": ["recognition/post-correction"],
       "categories": ["Text recognition and optimization"],
+      "input_file_grp_cardinality": 1,
+      "output_file_grp_cardinality": 1,
       "parameters": {
         "command": {
           "type": "string",

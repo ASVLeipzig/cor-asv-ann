@@ -4,3 +4,6 @@
 [submodule "cor-asv-ann-models"]
 	path = models
 	url = https://git.informatik.uni-leipzig.de/ocr-d/cor-asv-ann-models
+[submodule "testdata"]
+	path = testdata
+	url = https://github.com/OCR-D/assets
