@@ -17,7 +17,11 @@ from ocrd_utils import (
 )
 from ocrd_models.ocrd_page import (
     OcrdPage,
-    WordType, CoordsType, TextEquivType,
+    GlyphType,
+    WordType,
+    TextLineType,
+    CoordsType,
+    TextEquivType,
     ReadingOrderType,
     RegionRefType,
     RegionRefIndexedType,
@@ -90,11 +94,6 @@ class ANNCorrection(Processor):
         Produce new output files by serialising the resulting hierarchy.
         """
         pcgts = input_pcgts[0]
-        # Dragging Word/TextLine references along in all lists besides TextEquiv
-        # is necessary because the generateDS version of the PAGE-XML model
-        # has no references upwards in the hierarchy (from TextEquiv to containing
-        # elements, from Glyph/Word/TextLine to Word/TextLine/TextRegion), and
-        # its classes are not hashable.
         level = self.parameter['textequiv_level']
         self.logger.info("Correcting text in page '%s' at the %s level", page_id, level)
 
@@ -103,7 +102,7 @@ class ANNCorrection(Processor):
         line_sequences = _page_get_line_sequences_at(level, pcgts, logger=self.logger)
 
         # concatenate to strings and get dict of start positions to refs:
-        input_lines, conf, textequiv_starts, word_starts, textline_starts = \
+        input_lines, conf, textequiv_starts = \
             _line_sequences2string_sequences(
                 self.s2s.mapping[0], line_sequences,
                 charmap=self.parameter['charmap'])
@@ -118,9 +117,9 @@ class ANNCorrection(Processor):
 
         # re-align (from alignment scores) and overwrite the textequiv references:
         for (input_line, output_line, output_prob,
-             output_score, alignment, textequivs, words, textlines) in zip(
+             output_score, alignment, textequivs) in zip(
                  input_lines, output_lines, output_probs,
-                 output_scores, alignments, textequiv_starts, word_starts, textline_starts):
+                 output_scores, alignments, textequiv_starts):
             self.logger.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
 
             # convert soft scores (seen from output) to hard path (seen from input):
@@ -131,17 +130,16 @@ class ANNCorrection(Processor):
 
             # overwrite TextEquiv references:
             new_sequence = _update_sequence(
-                input_line, output_line, output_prob,
-                output_score, realignment,
-                textequivs, words, textlines)
+                input_line, output_line, output_prob, output_score,
+                realignment, textequivs)
 
             # update Word segmentation:
             if level != 'line':
                 _resegment_sequence(new_sequence, level, logger=self.logger)
 
             self.logger.info('corrected line with %d elements, ppl: %.3f, CER: %.1f%%',
-                             # fixme: do not count elements with textequiv.index == -1
-                             len(new_sequence), np.exp(output_score), distance * 100)
+                             len([x for x in new_sequence if x.index != -1]),
+                             np.exp(output_score), distance * 100)
 
         # make higher levels consistent again:
         page_update_higher_textequiv_levels(level, pcgts)
@@ -151,26 +149,20 @@ class ANNCorrection(Processor):
 def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
     '''Get TextEquiv sequences for PAGE-XML hierarchy level including whitespace.
     
-    Return a list of lines from the document `pcgts`,
-    where each line is a list of 3-tuples containing
-    TextEquiv / Word / TextLine objects from the given
-    hierarchy `level`. This includes artificial objects
-    for implicit whitespace between elements (marked by
-    `index=-1`, which is forbidden in the XML Schema).
-    
-    (If `level` is `glyph`, then the Word reference
-     will be the Word that contains the Glyph which
-     contains the TextEquiv.
-     If `level` is `word`, then the Word reference
-     will be the Word which contains the TextEquiv.
-     If `level` is `line`, then the Word reference
-     will be None.)
+    Return a list of lines from the document `pcgts`, where
+    each line is a list of TextEquiv objects from the given
+    hierarchy `level`. This includes artificial TextEquiv for
+    implicit whitespace between elements (marked by `index=-1`,
+    which is forbidden in the XML Schema).
+
+    Thus, for `level=line`, each line is a list of the line's
+    TextEquiv followed by a newline. For `level=word` or `glyph`,
+    each line is a list of words, interspersed by spaces and
+    followed by a newline.
     '''
     if logger is None:
         logger = getLogger('ocrd.processor.ANNCorrection')
-    sequences = list()
-    word = None # make accessible after loop
-    line = None # make accessible after loop
+    sequences = []
     regions = pcgts.get_Page().get_AllRegions(classes=['Text'], order='reading-order')
     if not regions:
         logger.warning("Page contains no text regions")
@@ -183,20 +175,21 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
             if level == 'line':
                 #logger.debug("Getting text in line '%s'", line.id)
                 textequivs = line.get_TextEquiv()
-                if textequivs:
-                    sequences[-1].append((textequivs[0], word, line))
+                if len(textequivs):
+                    sequences[-1].append(textequivs[0])
                 else:
                     logger.warning("Line '%s' contains no text results", line.id)
             else:
                 words = line.get_Word()
                 if not words:
                     logger.warning("Line '%s' contains no word", line.id)
+                    continue # no EOL
                 for word in words:
                     if level == 'word':
                         #logger.debug("Getting text in word '%s'", word.id)
                         textequivs = word.get_TextEquiv()
                         if textequivs:
-                            sequences[-1].append((textequivs[0], word, line))
+                            sequences[-1].append(textequivs[0])
                         else:
                             logger.warning("Word '%s' contains no text results", word.id)
                             continue # no inter-word
@@ -208,28 +201,34 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
                         for glyph in glyphs:
                             #logger.debug("Getting text in glyph '%s'", glyph.id)
                             textequivs = glyph.get_TextEquiv()
-                            if textequivs:
-                                sequences[-1].append((textequivs[0], word, line))
+                            if len(textequivs):
+                                sequences[-1].append(textequivs[0])
                             else:
                                 logger.warning("Glyph '%s' contains no text results", glyph.id)
                                 # treat as gap
-                                textequivs = [TextEquivType(Unicode='', conf=1.0)]
-                                glyph.set_TextEquiv(textequivs)
-                                sequences[-1].append((textequivs[0], word, line))
-                    sequences[-1].append((TextEquivType(Unicode=' ', conf=1.0, index=-1), word, line))
-                if sequences[-1]:
+                                gap = TextEquivType(Unicode='', conf=1.0)
+                                gap.parent_object_ = glyph
+                                glyph.set_TextEquiv([gap])
+                                sequences[-1].append(gap)
+                    space = TextEquivType(Unicode=' ', conf=1.0, index=-1)
+                    space.parent_object_ = word if level == 'word' else glyph
+                    sequences[-1].append(space)
+                if len(sequences[-1]):
                     sequences[-1].pop() # no inter-word
-            sequences[-1].append((TextEquivType(Unicode='\n', conf=1.0, index=-1), word, line))
+            newline = TextEquivType(Unicode='\n', conf=1.0, index=-1)
+            newline.parent_object_ = line if level == 'line' else word if level == 'word' else glyph
+            sequences[-1].append(newline)
     # filter empty lines (containing only newline):
     return [line for line in sequences if len(line) > 1]
 
 def _line_sequences2string_sequences(mapping, line_sequences, charmap=None):
-    '''Concatenate TextEquiv / Word / TextLine sequences to line strings.
+    '''Concatenate TextEquiv sequences to line strings.
     
-    Return a list of line strings, a list of confidence lists,
-    a list of dicts from string positions to TextEquiv references,
-    a list of dicts from string positions to Word references, and
-    a list of dicts from string positions to TextLine references.
+    \b
+    Return a 3-tuple:
+    - a list of line strings, 
+    - a list of confidence lists,
+    - a list of dicts from string positions to TextEquiv references.
     
     If `charmap` is not None, apply it as a character translation
     table on all characters.
@@ -237,18 +236,14 @@ def _line_sequences2string_sequences(mapping, line_sequences, charmap=None):
     from ..lib.seq2seq import GAP
     if charmap:
         charmap = str.maketrans(charmap)
-    input_lines, conf, textequiv_starts, word_starts, textline_starts = [], [], [], [], []
+    input_lines, conf, textequiv_starts = [], [], []
     for line_sequence in line_sequences:
         i = 0
         input_lines.append('')
-        conf.append(list())
-        textequiv_starts.append(dict())
-        word_starts.append(dict())
-        textline_starts.append(dict())
-        for textequiv, word, textline in line_sequence:
+        conf.append([])
+        textequiv_starts.append({})
+        for textequiv in line_sequence:
             textequiv_starts[-1][i] = textequiv
-            word_starts[-1][i] = word
-            textline_starts[-1][i] = textline
             if charmap:
                 textequiv.Unicode = textequiv.Unicode.translate(charmap)
             j = len(textequiv.Unicode)
@@ -263,10 +258,9 @@ def _line_sequences2string_sequences(mapping, line_sequences, charmap=None):
                 textequiv.Unicode = GAP
                 j = 1
             input_lines[-1] += textequiv.Unicode
-            # generateDS does not convert simpleType for attributes (yet?)
-            conf[-1].extend([float(textequiv.conf or "1.0")] * j)
+            conf[-1].extend([1.0 if textequiv.conf is None else textequiv.conf] * j)
             i += j
-    return input_lines, conf, textequiv_starts, word_starts, textline_starts
+    return input_lines, conf, textequiv_starts
 
 def _alignment2path(alignment, i_max, j_max, min_score):
     '''Find the best path through a soft alignment matrix via Viterbi search.
@@ -326,7 +320,7 @@ def _alignment2path(alignment, i_max, j_max, min_score):
             j -= 1
             i -= 1
     realignment[0] = 0 # init start of line
-    # logger = getLogger('processor.ANNCorrection')
+    # logger = getLogger('ocrd.processor.ANNCorrection')
     # logger.debug('realignment: %s', str(realignment))
     # from matplotlib import pyplot
     # pyplot.imshow(np.array(alignment).T)
@@ -357,13 +351,13 @@ def _alignment_path(input_text, output_text):
     assert j == len(output_text)
     assert len(alignment) > 0
     dist /= len(alignment) - 1 # ignore newline
-    # logger = getLogger('processor.ANNCorrection')
+    # logger = getLogger('ocrd.processor.ANNCorrection')
     # logger.debug('realignment: %s', str(realignment))
     return realignment, dist
 
 def _update_sequence(input_line, output_line, output_prob,
                      score, realignment,
-                     textequivs, words, textlines):
+                     textequivs):
     '''Apply correction across TextEquiv elements along alignment path of one line.
     
     Traverse the path `realignment` through `input_line` and `output_line`,
@@ -380,12 +374,17 @@ def _update_sequence(input_line, output_line, output_prob,
     belong to the document hierarchy itself.
     (Merging and splitting can be done afterwards.)
     
-    Return a list of TextEquiv / Word / TextLine tuples thus processed.
+    Return a list of TextEquivs thus processed.
     '''
     i_max = len(input_line)
     j_max = len(output_line)
     textequivs.setdefault(i_max, None) # init end of line
-    line = next(line for line in textlines.values() if line)
+    line = textequivs[0].parent_object_
+    if isinstance(line, GlyphType):
+        line = line.parent_object_
+    if isinstance(line, WordType):
+        line = line.parent_object_
+    assert isinstance(line, TextLineType), line
     last = []
     sequence = []
     for i in textequivs:
@@ -413,9 +412,9 @@ def _update_sequence(input_line, output_line, output_prob,
             # input:  N|    W    |N   N|     W   |   W|    N    |W
             # output:  |<-N W N->|     |<-W<-N W |    |<-W N W->|
             if textequiv.index == -1:
-                if output and not output.startswith((" ", "\n")) and sequence:
+                if output and not output.startswith((" ", "\n")) and len(sequence):
                     while output and not output.startswith((" ", "\n")):
-                        sequence[-1][0].Unicode += output[0]
+                        sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
                     #print('corrected non-whitespace LHS: ', last, [i, j])
@@ -423,16 +422,16 @@ def _update_sequence(input_line, output_line, output_prob,
                     j -= len(output.split(" ")[-1])
                     output = output_line[last[1]:j]
                     #print('corrected non-whitespace RHS: ', last, [i, j])
-                if output.split() and sequence:
+                if output.split() and len(sequence):
                     while output.split():
-                        sequence[-1][0].Unicode += output[0]
+                        sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
                     #print('corrected non-whitespace middle: ', last, [i, j])
             else:
-                if output.startswith(" ") and sequence and sequence[-1][0].index == -1:
+                if output.startswith(" ") and len(sequence) and sequence[-1].index == -1:
                     while output.startswith(" "):
-                        sequence[-1][0].Unicode += output[0]
+                        sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
                     #print('corrected whitespace LHS: ', last, [i, j])
@@ -444,14 +443,12 @@ def _update_sequence(input_line, output_line, output_prob,
             textequiv.Unicode = output
             #textequiv.conf = np.exp(-score)
             textequiv.conf = np.mean(prob or [1.0])
-            word = words[last[0]]
-            textline = textlines[last[0]]
-            sequence.append((textequiv, word, textline))
+            sequence.append(textequiv)
         last = [i, j]
     assert last == [i_max, j_max], (
         'alignment path did not reach top: %d/%d vs %d/%d in line "%s"' % (
             last[0], last[1], i_max, j_max, line.id))
-    for i, (textequiv, _, _) in enumerate(sequence):
+    for i, textequiv in enumerate(sequence):
         # disallow non-whitespace mapping to -1 (artificial whitespace)
         # (but allow whitespace to anything and anything to true segments)
         assert not textequiv.Unicode.split() or textequiv.index != -1, (
@@ -468,53 +465,58 @@ def _resegment_sequence(sequence, level, logger=None):
     '''
     if logger is None:
         logger = getLogger('ocrd.processor.ANNCorrection')
-    for i, (textequiv, word, textline) in enumerate(sequence):
+    for i, textequiv in enumerate(sequence):
+        if level == 'glyph':
+            word = textequiv.parent_object_.parent_object_
+        else:
+            word = textequiv.parent_object_
+        textline = word.parent_object_
+        assert isinstance(word, WordType), word
+        assert isinstance(textline, TextLineType), textline
         if textequiv.index == -1:
             if not textequiv.Unicode:
                 # whitespace was deleted: merge adjacent words
                 if i == 0 or i == len(sequence) - 1:
                     logger.error('cannot merge Words at the %s of line "%s"',
-                              'end' if i else 'start', textline.id)
+                                 'end' if i else 'start', textline.id)
                 else:
-                    prev_textequiv, prev_word, _ = sequence[i - 1]
-                    next_textequiv, next_word, _ = sequence[i + 1]
-                    if not prev_word or not next_word:
-                        logger.error('cannot merge Words "%s" and "%s" in line "%s"',
-                                  prev_textequiv.Unicode, next_textequiv.Unicode, textline.id)
+                    prev_textequiv = sequence[i - 1]
+                    next_textequiv = sequence[i + 1]
+                    if level == 'glyph':
+                        prev_word = prev_textequiv.parent_object_.parent_object_
+                        next_word = next_textequiv.parent_object_.parent_object_
                     else:
-                        merged = _merge_words(prev_word, next_word)
-                        logger.debug('merged %s and %s to %s in line %s',
-                                  prev_word.id, next_word.id, merged.id, textline.id)
-                        textline.set_Word([merged if word is prev_word else word
-                                           for word in textline.get_Word()
-                                           if not word is next_word])
+                        prev_word = prev_textequiv.parent_object_
+                        next_word = next_textequiv.parent_object_
+                    merged = _merge_words(prev_word, next_word)
+                    logger.debug('merged %s and %s to %s in line %s',
+                                 prev_word.id, next_word.id, merged.id, textline.id)
+                    textline.set_Word([merged if word is prev_word else word
+                                       for word in textline.get_Word()
+                                       if not word is next_word])
         elif " " in textequiv.Unicode:
             # whitespace was introduced: split word
-            if not word:
-                logger.error('cannot split Word "%s" in line "%s"',
-                          textequiv.Unicode, textline.id)
+            if level == 'glyph':
+                glyph = next(glyph for glyph in word.get_Glyph()
+                             if textequiv in glyph.get_TextEquiv())
+                prev_, next_ = _split_word_at_glyph(word, glyph)
+                parts = [prev_, next_]
             else:
-                if level == 'glyph':
-                    glyph = next(glyph for glyph in word.get_Glyph()
-                                 if textequiv in glyph.get_TextEquiv())
-                    prev_, next_ = _split_word_at_glyph(word, glyph)
-                    parts = [prev_, next_]
-                else:
-                    parts = []
-                    next_ = word
-                    while True:
-                        prev_, next_ = _split_word_at_space(next_)
-                        if " " in next_.get_TextEquiv()[0].Unicode:
-                            parts.append(prev_)
-                        else:
-                            parts.append(prev_)
-                            parts.append(next_)
-                            break
-                logger.debug('split %s to %s in line %s',
-                          word.id, [w.id for w in parts], textline.id)
-                textline.set_Word(reduce(lambda l, w, key=word, value=parts:
-                                         l + value if w is key else l + [w],
-                                         textline.get_Word(), []))
+                parts = []
+                next_ = word
+                while True:
+                    prev_, next_ = _split_word_at_space(next_)
+                    if " " in next_.get_TextEquiv()[0].Unicode:
+                        parts.append(prev_)
+                    else:
+                        parts.append(prev_)
+                        parts.append(next_)
+                        break
+            logger.debug('split %s to %s in line %s',
+                         word.id, [w.id for w in parts], textline.id)
+            textline.set_Word(reduce(lambda l, w, key=word, value=parts:
+                                     l + value if w is key else l + [w],
+                                     textline.get_Word(), []))
     
 def _merge_words(prev_, next_):
     merged = WordType(id=prev_.id + '.' + next_.id)
@@ -733,14 +735,13 @@ def page_get_reading_order(ro, rogroup):
 
 def page_element_unicode0(element):
     """Get Unicode string of the first text result."""
-    if element.get_TextEquiv():
-        return element.get_TextEquiv()[0].Unicode
+    if element.TextEquiv:
+        return element.TextEquiv[0].Unicode
     else:
         return ''
 
 def page_element_conf0(element):
     """Get confidence (as float value) of the first text result."""
-    if element.get_TextEquiv():
-        # generateDS does not convert simpleType for attributes (yet?)
-        return float(element.get_TextEquiv()[0].conf or "1.0")
+    if element.TextEquiv:
+        return 1.0 if element.TextEquiv[0].conf is None else element.TextEquiv[0].conf
     return 1.0
