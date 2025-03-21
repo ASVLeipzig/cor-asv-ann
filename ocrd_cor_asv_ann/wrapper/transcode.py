@@ -142,7 +142,11 @@ class ANNCorrection(Processor):
                              np.exp(output_score), distance * 100)
 
         # make higher levels consistent again:
-        page_update_higher_textequiv_levels(level, pcgts)
+        if level != 'region':
+            page_update_higher_textequiv_levels(level, pcgts)
+        # remove lower levels (cannot be made consistent):
+        if level != 'glyph':
+            page_remove_lower_textequiv_levels(level, pcgts)
 
         return OcrdPageResult(pcgts)
             
@@ -745,3 +749,20 @@ def page_element_conf0(element):
     if element.TextEquiv:
         return 1.0 if element.TextEquiv[0].conf is None else element.TextEquiv[0].conf
     return 1.0
+
+def page_remove_lower_textequiv_levels(level, pcgts):
+    page = pcgts.Page
+    if level == 'region':
+        for region in page.get_AllRegions(classes=['Text']):
+            region.TextEquiv = []
+    else:
+        for line in page.get_AllTextLines():
+            if level == 'line':
+                line.Word = []
+            else:
+                for word in line.Word or []:
+                    if level == 'word':
+                        word.Glyph = []
+                    else:
+                        for glyph in word.Glyph:
+                            glyph.Graphemes = []
