@@ -3,6 +3,7 @@ PYTHON ?= python
 PIP ?= pip
 DOCKER_BASE_IMAGE = docker.io/ocrd/core-cuda-tf1:v3.1.1
 DOCKER_TAG ?= ocrd/cor-asv-ann
+PYTEST_ARGS ?= --junit-xml=test.xml
 
 # BEGIN-EVAL makefile-parser --make-help Makefile
 
@@ -21,6 +22,7 @@ help:
 	@echo "  Variables"
 	@echo ""
 	@echo "    PYTHON"
+	@echo "    PYTEST_ARGS   Additional arguments for Pytest"
 	@echo "    DOCKER_TAG    Docker image tag of result for the docker target"
 
 # END-EVAL
