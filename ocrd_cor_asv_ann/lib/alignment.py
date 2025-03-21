@@ -5,6 +5,138 @@ from bisect import bisect_left, insort_left
 import unicodedata
 import uniseg.wordbreak
 
+L1_HISTLAT_EQV = [
+    # some of these are not even in NFKC:
+    {"ä", "ä", "a\u0364"}, # a umlaut: precomposed, decomposed, combinine e
+    {"ö", "ö", "o\u0364"}, # o umlaut: precomposed, decomposed, combinine e
+    {"ü", "ü", "u\u0364"}, # u umlaut: precomposed, decomposed, combinine e
+    {"Ä", "Ä", "A\u0364"}, # A umlaut: precomposed, decomposed, combinine e
+    {"Ö", "Ö", "O\u0364"}, # O umlaut: precomposed, decomposed, combinine e
+    {"Ü", "Ü", "U\u0364"}, # U umlaut: precomposed, decomposed, combinine e
+    #{"I", "J"} # most Fraktur fonts have only a single glyph for I and J
+    {"s", "ſ"}, # LATIN SMALL LETTER LONG S, U+017F
+    {"r", "ꝛ"}, # LATIN SMALL LETTER R ROTUNDA, U+A75B
+    {"z", "ʒ"}, # LATIN SMALL LETTER EZH/YOGH, U+0292
+    {"Z", "Ʒ"}, # LATIN CAPITAL LETTER EZH/YOGH, U+01B7
+    {"n", "ƞ"}, # LATIN SMALL LETTER N WITH LONG RIGHT LEG, U+019E
+    {"μ", "µ"}, # Greek vs math mu
+    {"π", "𝛑", "𝜋", "𝝅", "𝝿", "𝞹"}, # Greek vs math pi
+    {"0", "⁰"},
+    {"1", "¹"},
+    {"2", "²"},
+    {"3", "³"},
+    {"4", "⁴"},
+    {"5", "⁵"},
+    {"6", "⁶"},
+    {"7", "⁷"},
+    {"8", "⁸"},
+    {"9", "⁹", "ꝰ"},
+    {"„", "»", "›", "〟"}, # opening double quotes
+    {"“", "«", "‹", "〞"}, # closing double quotes
+    {"'", "ʹ", "ʼ", "′", "‘", "’", "‛", "᾽", "`"}, # single quotes
+    {",", "‚"}, # SINGLE LOW-9 QUOTATION MARK, U+201A
+    {"-", "−", "—", "‐", "‑", "‒", "–", "⁃", "﹘", "―", "─", "⸗"},
+    {"‟", "〃", "”", "″"}, # ditto signs
+    {"~", "∼", "˜", "῀", "⁓"},
+    {"(", "⟨", "⁽"},
+    {")", "⟩", "⁾"},
+    {"/", "⧸", "⁄", "∕"},
+    {"\\", "⧹", "∖", "⧵"}
+]
+
+L2_HISTLAT_EQV = {
+    # keep only vocalic ligatures...
+    '\uf502': 'ch', # Latin small letter c ligated with latin small letter h, U+F502
+    '\ueec4': 'ck', # Latin small ligature ck, U+EEC4
+    'ﬅ': 'ſt',
+    'ﬁ': 'fi',
+    'ﬀ': 'ff',
+    'ﬂ': 'fl',
+    'ﬃ': 'ffi',
+    '\uf4fc': 'ſk',
+    '\ueedc': 'tz', # MUFI: LATIN SMALL LIGATURE TZ
+    '\ueedc': 'tʒ', # PUA EEDC -> tʒ
+    '\uf532': 'as', # eMOP: Latin small ligature as, U+f532
+    '\uf533': 'is', # eMOP: Latin small ligature is, U+f533
+    '\uf534': 'us', # eMOP: Latin small ligature us, U+f534
+    '\uf535': 'Qu', # eMOP: Latin ligature capital Q small u, U+f535
+    'ĳ': 'ij', # U+0133 LATIN SMALL LIGATURE IJ
+    '\ue8bf': 'q&',  # MUFI: LATIN SMALL LETTER Q LIGATED WITH FINAL ET, U+E8BF
+    '\ue8bf': 'qʒ', # PUA E8BF -> q; (or to qʒ, or to que, as you like)
+    '\ueba5': 'ſp', # MUFI: LATIN SMALL LIGATURE LONG S P, U+EBA5
+    'ﬆ': 'st', # U+FB06 LATIN SMALL LIGATURE ST
+    'q̈': 'qᷓ', # replace combining diaeresis with flattened a above (abbrev.: quam)
+    'c̈': 'cᷓ', # (abbrev.: cetera)
+    'ḡ': 'gᷓ', # U+1E21 -> g + U1DD3 (ang- or gna-)
+    # use combining r rotunda (U+1DE3, ᷣ) instead of combining ogonek above (U+1DCE, ᷎)
+    # or combining hook above (U+0309, ̉); adapt to all your combinations
+    'v̉': 'vᷣ', # combining hook above -> comb. r rotunda, U+1DE3
+    'v᷎': 'vᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+    'b᷎': 'bᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+    'p᷎': 'pᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
+    # exception: d + comb. r rotunda is hardly visible on screen with most fonts, so use eth instead for the d + something
+    'd̉': 'ð', # d+comb. hook > eth, U+00F0 (CTRL-d on Linux keyboard)
+    'ꝟ': 'vᷣ', # U+A75F -> v with comb. r rotunda, U+1DE3
+    'tᷣ': 't᷑', # comb. r above -> combining ur above, U+1DD1 (in Latin passives such as dat᷑ = datur)
+    # replace font dependent PUA code points with accepted Unicodes
+    '\ueada': 'ſt', # PUA EADA -> ſt
+    '\ueba2': 'ſi', # PUA EBA2 -> ſi
+    '\ueba3': 'ſl', # PUA EBA3 -> ſl
+    '\ueba6': 'ſſ', # PUA EBA6 -> ſſ
+    '\ueba7': 'ſſi', # MUFI: LATIN SMALL LIGATURE LONG S LONG S I, U+EBA7
+    '\uf4ff': 'ſſt', # PUA F4FF -> ſſt
+    '\uf52c': 'ſp', # PUA F52C -> ſp
+    '\ueec5': 'ct', # PUA EEC5 -> ct
+    '\ueecb': 'ft', # PUA EECB -> ft
+    '\ue5d2': 'm̃', # PUA E5D2 -> m̃
+    '\ue5dc': 'ñ', # PUA E5DC -> ñ
+    '\ue665': 'p̃', # PUA E665 -> p + ...
+    '\ue42c': 'aͤ', # PUA E42C -> a + U+0364, combining e above
+    '\ue644': 'oͤ', # PUA E644 -> o + U+0364
+    '\ue72b': 'uͤ', # PUA E72B -> u + U+0364
+    '\ue72d': 'ů', # PUA E72D -> U+016F
+    '\uebac': 'ß', # PUA EBAC -> ß (check for correct meaning)
+    '\ue8b7': 'ß', # PUA E8B7 -> ß (proper replacement in some German printings)
+    '\ue8b7': 'ſᷣ', # PUA E8B7 -> ſ with combining r rotunda (in some Latin printings)
+    '\uf1a6': 'ꝰ', # PUA F1A6 -> U+A770, modifier letter us
+    '\uf223': 'm', # PUA F223 -> m
+    '\uf158': '⁊', # PUA F158 -> U+204A (Tironian et)
+    '\uf159': 'ð', # PUA F159 -> eth, U+00F0
+    '\uf160': ':', # PUA F160 -> :
+    'q\uf02f': 'qͥ', # PUA F02F -> small letter i above (U+0365)
+    't\uf1cc': 't᷑', # t + PUA F1CC -> t + combining ur above (U+1DD1)
+    '\uf4f9': 'll', # PUA F4F9 -> ll
+    # replace macron with tilde (easy to reach on keyboard and signalling abbreviations)
+    'ā': 'ã',
+    'ē': 'ẽ',
+    'ī': 'ĩ',
+    'ō': 'õ',
+    'ū': 'ũ',
+    'c̄': 'c̃',
+    'q̄': 'q̃',
+    'r̄': 'r̃',
+    '\uf50e': 'q́', # U+F50E LATIN SMALL LETTER Q WITH ACUTE ACCENT
+}
+
+class Confusion():
+    def __init__(self, count, pair):
+        self.count = count
+        self.pair = pair
+    def __repr__(self):
+        return str((self.count, self.pair))
+    def __lt__(self, other):
+        return self.count > other.count
+    def __le__(self, other):
+        return self.count >= other.count
+    def __eq__(self, other):
+        return self.count == other.count
+    def __ne__(self, other):
+        return self.count != other.count
+    def __gt__(self, other):
+        return self.count < other.count
+    def __ge__(self, other):
+        return self.count <= other.count
+
 class Alignment():
     def __init__(self, gap_element=0, logger=None, confusion=False):
         self.confusion = dict() if confusion else None
@@ -131,24 +263,6 @@ class Alignment():
         if self.confusion is None:
             raise Exception("aligner was not configured to count confusion")
         table = []
-        class Confusion(object):
-            def __init__(self, count, pair):
-                self.count = count
-                self.pair = pair
-            def __repr__(self):
-                return str((self.count, self.pair))
-            def __lt__(self, other):
-                return self.count > other.count
-            def __le__(self, other):
-                return self.count >= other.count
-            def __eq__(self, other):
-                return self.count == other.count
-            def __ne__(self, other):
-                return self.count != other.count
-            def __gt__(self, other):
-                return self.count < other.count
-            def __ge__(self, other):
-                return self.count <= other.count
         total = 0
         for pair, count in self.confusion.items():
             total += count
@@ -166,8 +280,8 @@ class Alignment():
         
     def get_levenshtein_distance(self, source_text, target_text):
         """Align strings and calculate raw unweighted edit distance between its codepoints."""
-        import editdistance
-        dist = editdistance.eval(source_text, target_text)
+        from rapidfuzz.distance import Levenshtein
+        dist = Levenshtein.distance(source_text, target_text)
         # not quite correct to use the largest sequence length:
         # this underestimates the alignment path length (which
         # we cannot get from the library)
@@ -198,80 +312,7 @@ class Alignment():
                 return unicodedata.normalize(normalization, seq)
             elif normalization == 'historic_latin':
                 # multi-codepoint equivalences not involving combining characters:
-                equivalences = { # keep only vocalic ligatures...
-                    '': 'ſſ',
-                    "": 'ſſi',  # MUFI: LATIN SMALL LIGATURE LONG S LONG S I, U+EBA7
-                    '': 'ch', # Latin small letter c ligated with latin small letter h, U+F502
-                    '': 'ck', # Latin small ligature ck, U+EEC4
-                    'ﬅ': 'ſt',
-                    'ﬁ': 'fi',
-                    'ﬀ': 'ff',
-                    'ﬂ': 'fl',
-                    'ﬃ': 'ffi',
-                    '': 'ſk',
-                    '': 'tz',       # MUFI: LATIN SMALL LIGATURE TZ
-                    '': 'as',  # eMOP: Latin small ligature as, U+f532
-                    '': 'is',  # eMOP: Latin small ligature is, U+f533
-                    '': 'us',  # eMOP: Latin small ligature us, U+f534
-                    '': 'Qu',  # eMOP: Latin ligature capital Q small u, U+f535
-                    'ĳ': 'ij',       # U+0133 LATIN SMALL LIGATURE IJ
-                    '': 'q&',  # MUFI: LATIN SMALL LETTER Q LIGATED WITH FINAL ET, U+E8BF
-                    '': 'ſp',  # MUFI: LATIN SMALL LIGATURE LONG S P, U+EBA5
-                    'ﬆ': 'st',      # U+FB06 LATIN SMALL LIGATURE ST
-                    'q̈': 'qᷓ', # replace combining diaeresis with flattened a above (abbrev.: quam)
-                    'c̈': 'cᷓ', # (abbrev.: cetera)
-                    'ḡ': 'gᷓ', # U+1E21 -> g + U1DD3 (ang- or gna-)
-                    # use combining r rotunda (U+1DE3, ᷣ) instead of combining ogonek above (U+1DCE, ᷎)
-                    # or combining hook above (U+0309, ̉); adapt to all your combinations
-                    'v̉': 'vᷣ', # combining hook above -> comb. r rotunda, U+1DE3
-                    'v᷎': 'vᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
-                    'b᷎': 'bᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
-                    'p᷎': 'pᷣ', # combining ogonek above -> comb. r rotunda, U+1DE3
-                    # exception: d + comb. r rotunda is hardly visible on screen with most fonts, so use eth instead for the d + something
-                    'd̉': 'ð', # d+comb. hook > eth, U+00F0 (CTRL-d on Linux keyboard)
-                    'ꝟ': 'vᷣ', # U+A75F -> v with comb. r rotunda, U+1DE3
-                    'tᷣ': 't᷑', # comb. r above -> combining ur above, U+1DD1 (in Latin passives such as dat᷑ = datur)
-                    # replace font dependent PUA code points with accepted Unicodes
-                    '': 'ſt', # PUA EADA -> ſt
-                    '': 'ſi', # PUA EBA2 -> ſi
-                    '': 'ſl', # PUA EBA3 -> ſl
-                    '': 'ſſ', # PUA EBA6 -> ſſ
-                    '': 'ſſi', # PUA EBA7 -> ſſi
-                    '': 'ſſt', # PUA F4FF -> ſſt
-                    '': 'ſp', # PUA F52C -> ſp
-                    '': 'ct', # PUA EEC5 -> ct
-                    '': 'ft', # PUA EECB -> ft
-                    '': 'tʒ', # PUA EEDC -> tʒ
-                    '': 'm̃', # PUA E5D2 -> m̃
-                    '': 'ñ', # PUA E5DC -> ñ
-                    '': 'p̃', # PUA E665 -> p + ...
-                    '': 'qʒ', # PUA E8BF -> q; (or to qʒ, or to que, as you like)
-                    '': 'aͤ', # PUA E42C -> a + U+0364, combining e above
-                    '': 'oͤ', # PUA E644 -> o + U+0364
-                    '': 'uͤ', # PUA E72B -> u + U+0364
-                    '': 'ů', # PUA E72D -> U+016F
-                    '': 'ß', # PUA EBAC -> ß (check for correct meaning)
-                    '': 'ß', # PUA E8B7 -> ß (proper replacement in some German printings)
-                    #'': 'ſᷣ', # PUA E8B7 -> ſ with combining r rotunda (in some Latin printings)
-                    '': 'ꝰ', # PUA F1A6 -> U+A770, modifier letter us
-                    '': 'm', # PUA F223 -> m
-                    '': '⁊', # PUA F158 -> U+204A (Tironian et)
-                    '': 'ð', # PUA F159 -> eth, U+00F0
-                    '': ':', # PUA F160 -> :
-                    'q': 'qͥ', # PUA F02F -> small letter i above (U+0365)
-                    't': 't᷑', # t + PUA F1CC -> t + combining ur above (U+1DD1)
-                    '': 'll', # PUA F4F9 -> ll
-                    # replace macron with tilde (easy to reach on keyboard and signalling abbreviations)
-                    'ā': 'ã',
-                    'ē': 'ẽ',
-                    'ī': 'ĩ',
-                    'ō': 'õ',
-                    'ū': 'ũ',
-                    'c̄': 'c̃',
-                    'q̄': 'q̃',
-                    'r̄': 'r̃',
-                    '': 'q́' # U+F50E LATIN SMALL LETTER Q WITH ACUTE ACCENT
-                } if gtlevel < 3 else {}
+                equivalences = L2_HISTLAT_EQV if gtlevel < 3 else {}
                 equivtab = dict()
                 for key in list(equivalences):
                     if len(key) == 1:
@@ -283,44 +324,7 @@ class Alignment():
             else:
                 return seq
         if normalization == 'historic_latin' and gtlevel == 1:
-            equivalences = [
-                # some of these are not even in NFKC:
-                {"ä", "ä", "a\u0364"}, # a umlaut: precomposed, decomposed, combinine e
-                {"ö", "ö", "o\u0364"}, # o umlaut: precomposed, decomposed, combinine e
-                {"ü", "ü", "u\u0364"}, # u umlaut: precomposed, decomposed, combinine e
-                {"Ä", "Ä", "A\u0364"}, # A umlaut: precomposed, decomposed, combinine e
-                {"Ö", "Ö", "O\u0364"}, # O umlaut: precomposed, decomposed, combinine e
-                {"Ü", "Ü", "U\u0364"}, # U umlaut: precomposed, decomposed, combinine e
-                #{"I", "J"} # most Fraktur fonts have only a single glyph for I and J
-                {"s", "ſ"}, # LATIN SMALL LETTER LONG S, U+017F
-                {"r", "ꝛ"}, # LATIN SMALL LETTER R ROTUNDA, U+A75B
-                {"z", "ʒ"}, # LATIN SMALL LETTER EZH/YOGH, U+0292
-                {"Z", "Ʒ"}, # LATIN CAPITAL LETTER EZH/YOGH, U+01B7
-                {"n", "ƞ"}, # LATIN SMALL LETTER N WITH LONG RIGHT LEG, U+019E
-                {"μ", "µ"}, # Greek vs math mu
-                {"π", "𝛑", "𝜋", "𝝅", "𝝿", "𝞹"}, # Greek vs math pi
-                {"0", "⁰"},
-                {"1", "¹"},
-                {"2", "²"},
-                {"3", "³"},
-                {"4", "⁴"},
-                {"5", "⁵"},
-                {"6", "⁶"},
-                {"7", "⁷"},
-                {"8", "⁸"},
-                {"9", "⁹", "ꝰ"},
-                {"„", "»", "›", "〟"}, # opening double quotes
-                {"“", "«", "‹", "〞"}, # closing double quotes
-                {"'", "ʹ", "ʼ", "′", "‘", "’", "‛", "᾽", "`"}, # single quotes
-                {",", "‚"}, # SINGLE LOW-9 QUOTATION MARK, U+201A
-                {"-", "−", "—", "‐", "‑", "‒", "–", "⁃", "﹘", "―", "─", "⸗"},
-                {"‟", "〃", "”", "″"}, # ditto signs
-                {"~", "∼", "˜", "῀", "⁓"},
-                {"(", "⟨", "⁽"},
-                {")", "⟩", "⁾"},
-                {"/", "⧸", "⁄", "∕"},
-                {"\\", "⧹", "∖", "⧵"}
-            ]
+            equivalences = L1_HISTLAT_EQV
         else:
             equivalences = []
         def equivalent(x, y):
@@ -365,6 +369,7 @@ class Edits():
     hist1 = None
     hist2 = None
     worst = None
+
     class Example():
         mean = 0
         length = 0

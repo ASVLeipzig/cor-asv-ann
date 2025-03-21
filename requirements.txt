@@ -4,5 +4,5 @@ keras == 2.3.*
 numpy
 tensorflow-gpu == 1.15.*
 h5py<3.0.0
-editdistance
+rapidfuzz
 uniseg
