@@ -63,7 +63,127 @@ def test_all(processor_kwargs, subtests):
         glyphs = tree1.xpath("//page:Glyph", namespaces=NS)
         assert len(glyphs) > 20, "result must contain glyphs"
 
+    grps = [grp for grp in ws.mets.file_groups
+            if 'OCR-D-OCR-' in grp]
+    input_file_grp = ','.join(grps)
+    output_file_grp = 'OCR-D-OCR-MULTI'
+    with subtests.test(msg="test align"):
+        run_processor(AlignLines,
+                      input_file_grp=input_file_grp,
+                      output_file_grp=output_file_grp,
+                      parameter={
+                          'method': 'combined',
+                      },
+                      **processor_kwargs,
+        )
+        ws.save_mets()
+        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
+        results = list(ws.find_files(file_grp=output_file_grp, mimetype=MIMETYPE_PAGE))
+        assert len(results), "found no output PAGE files"
+        assert len(results) == len(pages)
+        result1 = results[0]
+        assert os.path.exists(result1.local_filename), "result for first page not found in filesystem"
+        tree1 = page_from_file(result1).etree
+        line1 = tree1.xpath(
+            "//page:TextLine[page:TextEquiv/page:Unicode[contains(text(),'Aufklärung')]]",
+            namespaces=NS,
+        )
+        assert len(line1) >= 1, "result is inaccurate"
+        line1 = line1[0]
+
+    # use OCR-D-OCR-MULTI as reference (because our GT has different segmentation)
+    input_file_grp = ','.join([output_file_grp] + grps)
+    output_file_grp = 'OCR-D-EVAL'
+    with subtests.test(msg="test evaluate (multiple fileGrps)"):
+        run_processor(EvaluateLines,
+                      input_file_grp=input_file_grp,
+                      output_file_grp=output_file_grp,
+                      parameter={
+                          'match_on': 'id',
+                          'confusion': 10,
+                          'histogram': True,
+                          'metric': 'historic_latin',
+                          'gt_level': 2,
+                      },
+                      **processor_kwargs,
+        )
+        ws.save_mets()
+        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
+        results = list(ws.find_files(file_grp=output_file_grp, mimetype='application/json'))
+        assert len(results), "found no output JSON report files"
+        assert len(results) == len(pages) + 1
+        result0 = next((result for result in results if result.pageId is None), None)
+        assert result0 is not None, "found no document-wide JSON report file"
+        with open(result0.local_filename) as file:
+            result0 = json.load(file)
+        for ocr_file_grp in grps:
+            assert "%s,OCR-D-OCR-MULTI" % ocr_file_grp in result0
+        eval_result = result0
+
+    output_file_grp = 'OCR-D-OCR-ALL'
+    with subtests.test(msg="test join"):
+        run_processor(JoinLines,
+                      input_file_grp=input_file_grp,
+                      output_file_grp=output_file_grp,
+                      parameter={
+                          'match-on': 'id',
+                          'add-filegrp-index': True,
+                      },
+                      **processor_kwargs,
+        )
+        ws.save_mets()
+        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
+        results = list(ws.find_files(file_grp=output_file_grp, mimetype=MIMETYPE_PAGE))
+        assert len(results), "found no output PAGE files"
+        assert len(results) == len(pages)
+        result1 = results[0]
+        assert os.path.exists(result1.local_filename), "result for first page not found in filesystem"
+        tree1 = page_from_file(result1).etree
+        line1 = tree1.xpath(
+            "//page:TextLine[page:TextEquiv/page:Unicode[contains(text(),'Aufklaͤrung')]]",
+            namespaces=NS,
+        )
+        assert len(line1) >= 1, "result is inaccurate"
+        idxs = line1[0].xpath(
+            "./page:TextEquiv/@index",
+            namespaces=NS,
+        )
+        assert len(idxs) == len(grps) + 1
+
     input_file_grp = output_file_grp
+    output_file_grp = 'OCR-D-EVAL2'
+    with subtests.test(msg="test evaluate (single joined fileGrp)"):
+        run_processor(EvaluateLines,
+                      input_file_grp=input_file_grp,
+                      output_file_grp=output_file_grp,
+                      parameter={
+                          'match_on': 'index',
+                          'confusion': 10,
+                          'histogram': True,
+                          'metric': 'historic_latin',
+                          'gt_level': 2,
+                      },
+                      **processor_kwargs,
+        )
+        ws.save_mets()
+        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
+        results = list(ws.find_files(file_grp=output_file_grp, mimetype='application/json'))
+        assert len(results), "found no output JSON report files"
+        assert len(results) == len(pages) + 1
+        result0 = next((result for result in results if result.pageId is None), None)
+        assert result0 is not None, "found no document-wide JSON report file"
+        with open(result0.local_filename) as file:
+            result0 = json.load(file)
+        for ocr_file_grp, _ in enumerate(grps):
+            assert "%d,0" % (ocr_file_grp + 1) in result0
+        eval2_result = result0
+
+    for n_ocr, ocr_file_grp in enumerate(grps):
+        pair = "%s,%s" % (ocr_file_grp, 'OCR-D-OCR-MULTI')
+        pair2 = "%d,0" % (n_ocr + 1)
+        assert eval_result[pair]['char-error-rate-mean'] == eval2_result[pair2]['char-error-rate-mean']
+
+    input_file_grp = 'OCR-D-OCR-PC-ANN'
     output_file_grp = input_file_grp + '-MARK'
     with subtests.test(msg="test mark with hunspell"):
         run_processor(MarkWords,
@@ -94,113 +214,3 @@ def test_all(processor_kwargs, subtests):
             namespaces=NS,
         )
         assert len(oov1) >= 1, "out-of-vocabulary word not found"
-    grps = [grp for grp in ws.mets.file_groups
-            if 'OCR-D-OCR-' in grp]
-    input_file_grp = ','.join(grps)
-    output_file_grp = 'OCR-D-OCR-MULTI'
-    with subtests.test(msg="test align"):
-        run_processor(AlignLines,
-                      input_file_grp=input_file_grp,
-                      output_file_grp=output_file_grp,
-                      parameter={
-                          'method': 'combined',
-                      },
-                      **processor_kwargs,
-        )
-        ws.save_mets()
-        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
-        results = list(ws.find_files(file_grp=output_file_grp, mimetype=MIMETYPE_PAGE))
-        assert len(results), "found no output PAGE files"
-        assert len(results) == len(pages)
-        result1 = results[0]
-        assert os.path.exists(result1.local_filename), "result for first page not found in filesystem"
-        tree1 = page_from_file(result1).etree
-        line1 = tree1.xpath(
-            "//page:TextLine[page:TextEquiv/page:Unicode[contains(text(),'Aufklärung')]]",
-            namespaces=NS,
-        )
-        assert len(line1) >= 1, "result is inaccurate"
-        line1 = line1[0]
-    grps = [grp for grp in ws.mets.file_groups
-            if 'OCR-D-OCR-' in grp]
-    input_file_grp = ','.join(grps)
-    output_file_grp = 'OCR-D-EVAL'
-    with subtests.test(msg="test evaluate (multiple fileGrps)"):
-        run_processor(EvaluateLines,
-                      input_file_grp=input_file_grp,
-                      output_file_grp=output_file_grp,
-                      parameter={
-                          'match_on': 'id',
-                          'confusion': 10,
-                          'histogram': True,
-                          'metric': 'historic_latin',
-                          'gt_level': 2,
-                      },
-                      **processor_kwargs,
-        )
-        ws.save_mets()
-        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
-        results = list(ws.find_files(file_grp=output_file_grp, mimetype='application/json'))
-        assert len(results), "found no output JSON report files"
-        assert len(results) == len(pages) + 1
-        result0 = next((result for result in results if result.pageId is None), None)
-        assert result0 is not None, "found no document-wide JSON report file"
-        with open(result0.local_filename) as file:
-            result0 = json.load(file)
-        assert result0.keys(), result0
-        print(result0)
-    output_file_grp = 'OCR-D-OCR-ALL'
-    with subtests.test(msg="test join"):
-        run_processor(JoinLines,
-                      input_file_grp=input_file_grp,
-                      output_file_grp=output_file_grp,
-                      parameter={
-                          'match-on': 'id',
-                          'add-filegrp-index': True,
-                      },
-                      **processor_kwargs,
-        )
-        ws.save_mets()
-        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
-        results = list(ws.find_files(file_grp=output_file_grp, mimetype=MIMETYPE_PAGE))
-        assert len(results), "found no output PAGE files"
-        assert len(results) == len(pages)
-        result1 = results[0]
-        assert os.path.exists(result1.local_filename), "result for first page not found in filesystem"
-        tree1 = page_from_file(result1).etree
-        line1 = tree1.xpath(
-            "//page:TextLine[page:TextEquiv/page:Unicode[contains(text(),'Aufklaͤrung')]]",
-            namespaces=NS,
-        )
-        assert len(line1) >= 1, "result is inaccurate"
-        idxs = line1[0].xpath(
-            "./page:TextEquiv/@index",
-            namespaces=NS,
-        )
-        assert len(idxs) == len(grps)
-    input_file_grp = output_file_grp
-    output_file_grp = 'OCR-D-EVAL2'
-    with subtests.test(msg="test evaluate (single joined fileGrp)"):
-        run_processor(EvaluateLines,
-                      input_file_grp=input_file_grp,
-                      output_file_grp=output_file_grp,
-                      parameter={
-                          'match_on': 'index',
-                          'confusion': 10,
-                          'histogram': True,
-                          'metric': 'historic_latin',
-                          'gt_level': 2,
-                      },
-                      **processor_kwargs,
-        )
-        ws.save_mets()
-        assert os.path.isdir(os.path.join(ws.directory, output_file_grp))
-        results = list(ws.find_files(file_grp=output_file_grp, mimetype='application/json'))
-        assert len(results), "found no output JSON report files"
-        assert len(results) == len(pages) + 1
-        result0 = next((result for result in results if result.pageId is None), None)
-        assert result0 is not None, "found no document-wide JSON report file"
-        with open(result0.local_filename) as file:
-            result0 = json.load(file)
-        assert result0.keys(), result0
-        print(result0)
