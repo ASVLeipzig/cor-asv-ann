@@ -27,6 +27,7 @@ def workspace(tmpdir, pytestconfig, asset):
     os.makedirs(os.path.join(tmpdir, 'models'))
     for model in os.listdir('models'):
         os.symlink(os.path.join(os.getcwd(), 'models', model), os.path.join(tmpdir, 'models', model))
+    config.OCRD_MISSING_OUTPUT = "ABORT"
     with pushd_popd(tmpdir):
         directory = str(tmpdir)
         resolver = Resolver()
@@ -47,6 +48,7 @@ def workspace(tmpdir, pytestconfig, asset):
             else:
                 workspace.download_file(file)
         yield workspace, page_id
+    config.reset_defaults()
     disableLogging()
 
 def pytest_addoption(parser):
