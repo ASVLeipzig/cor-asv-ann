@@ -823,7 +823,12 @@ class Sequence2Sequence(object):
                             encoder_outputs=[encoder_output[j:j+1] for encoder_output in encoder_outputs]))
                     except StopIteration:
                         self.logger.error('cannot beam-decode input line %d: "%s"', j, input_line)
-                        line = input_line
+                        if isinstance(input_line[0], tuple):
+                            line = ''.join(chunk[0] for chunk in input_line)
+                        if isinstance(input_line[0], list):
+                            line = ''.join(chunk[0][0] if chunk else '' for chunk in input_line)
+                        else:
+                            line = input_line
                         probs = [1.0] * len(line)
                         score = 0
                         alignment = np.eye(len(line)).tolist()
