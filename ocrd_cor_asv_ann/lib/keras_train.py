@@ -93,10 +93,8 @@ def fit_generator_autosized(model,
     callbacks = cbks.CallbackList(_callbacks)
 
     # it's possible to callback a different model than self:
-    if hasattr(model, 'callback_model') and model.callback_model:
-        callback_model = model.callback_model
-    else:
-        callback_model = model
+    callback_model = model._get_callback_model()
+
     callbacks.set_model(callback_model)
     callbacks.set_params({
         'epochs': epochs,
@@ -105,7 +103,7 @@ def fit_generator_autosized(model,
         'do_validation': do_validation,
         'metrics': callback_metrics,
     })
-    callbacks.on_train_begin()
+    callbacks._call_begin_hook('train')
     
     enqueuer = None
     val_enqueuer = None
@@ -180,7 +178,7 @@ def fit_generator_autosized(model,
                                      str(generator_output))
                 # build batch logs
                 batch_logs = {}
-                if not x:
+                if not x or len(x) == 0:
                     # Handle data tensors support when no input given
                     # step-size = 1 for data tensors
                     batch_size = 1
@@ -204,7 +202,8 @@ def fit_generator_autosized(model,
                 for l, o in zip(out_labels, outs):
                     batch_logs[l] = o
                 
-                callbacks.on_batch_end(batch_index, batch_logs)
+                callbacks._call_batch_hook('train', 'end', batch_index, batch_logs)
+
                 if epoch == initial_epoch and verbose:
                     log_values = []
                     for k in callback_metrics:
@@ -248,6 +247,7 @@ def fit_generator_autosized(model,
                         val_x, val_y,
                         batch_size=batch_size,
                         sample_weight=val_sample_weights,
+                        callbacks=validation_callbacks,
                         verbose=0)
                 if not isinstance(val_outs, list):
                     val_outs = [val_outs]
@@ -264,7 +264,7 @@ def fit_generator_autosized(model,
                     print()
                     progbar = cbks.ProgbarLogger(
                         count_mode='steps',
-                        stateful_metrics=model.stateful_metric_names)
+                        stateful_metrics=model.metrics_names[1:])
                     progbar.set_model(callback_model)
                     callbacks.append(progbar)
                 callbacks.set_params({
