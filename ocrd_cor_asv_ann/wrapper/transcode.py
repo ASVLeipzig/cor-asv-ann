@@ -121,7 +121,6 @@ class ANNCorrection(Processor):
                  output_scores, alignments, textequiv_starts):
             input_line_top = ''.join([chunk[0][0] for chunk in input_line])
             input_line_len = sum((max((len(x[0]) for x in chunk), default=0) for chunk in input_line))
-            self.logger.debug('"%s" -> "%s"', input_line_top.rstrip('\n'), output_line.rstrip('\n'))
 
             # convert soft scores (seen from output) to hard path (seen from input):
             realignment, distance = _alignment2path(alignment, input_line_len, len(output_line),
@@ -131,7 +130,7 @@ class ANNCorrection(Processor):
             #realignment, distance = _alignment_path(input_line, output_line)
 
             # overwrite TextEquiv references:
-            new_sequence = _update_sequence(
+            line, new_sequence = _update_sequence(
                 input_line, output_line, output_prob, output_score,
                 realignment, textequivs, self.logger)
 
@@ -139,9 +138,16 @@ class ANNCorrection(Processor):
             if level != 'line':
                 _resegment_sequence(new_sequence, level, logger=self.logger)
 
-            self.logger.info('corrected line with %d elements, ppl: %.3f, CER: %.1f%%',
-                             len([x for x in new_sequence if x.index != -1]),
-                             np.exp(output_score), distance * 100)
+            if input_line_top != output_line:
+                self.logger.debug('"%s" → "%s"', input_line_top.rstrip('\n'), output_line.rstrip('\n'))
+                self.logger.info('corrected line "%s" with %d elements, ppl: %.3f, CER: %.1f%%',
+                                 line.id,
+                                 len([x for x in new_sequence if x.index != -1]),
+                                 np.exp(output_score),
+                                 distance / len(realignment) * 100)
+            else:
+                self.logger.debug('"%s"', input_line_top.rstrip('\n'))
+                self.logger.info('kept line "%s"', line.id)
 
         # make higher levels consistent again:
         if level != 'region':
@@ -179,7 +185,7 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
         for line in lines:
             sequences.append([])
             if level == 'line':
-                #logger.debug("Getting text in line '%s'", line.id)
+                logger.log(5, "Getting text in line '%s'", line.id)
                 textequivs = line.get_TextEquiv()
                 if len(textequivs):
                     sequences[-1].append(textequivs)
@@ -192,7 +198,7 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
                     continue # no EOL
                 for word in words:
                     if level == 'word':
-                        #logger.debug("Getting text in word '%s'", word.id)
+                        logger.log(5, "Getting text in word '%s'", word.id)
                         textequivs = word.get_TextEquiv()
                         if textequivs:
                             sequences[-1].append(textequivs)
@@ -205,7 +211,7 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
                             logger.warning("Word '%s' contains no glyphs", word.id)
                             continue # no inter-word
                         for glyph in glyphs:
-                            #logger.debug("Getting text in glyph '%s'", glyph.id)
+                            logger.log(5, "Getting text in glyph '%s'", glyph.id)
                             textequivs = glyph.get_TextEquiv()
                             if len(textequivs):
                                 sequences[-1].append(textequivs)
@@ -261,6 +267,8 @@ def _line_sequences2confmat_sequences(mapping, line_sequences, charmap=None):
                     assert GAP not in mapping, (
                         'character "%s" must not be mapped (needed for gap repair)' % GAP)
                     textequiv.Unicode = GAP
+                if textequiv.conf is None:
+                    textequiv.conf = 1.0
             # confmat input uses zero-padding within sequences
             # so we need the longest alternative:
             j = max((len(textequiv.Unicode) for textequiv in textequivs), default=0)
@@ -383,11 +391,12 @@ def _update_sequence(input_sequence, output_line, output_prob,
     to avoid loosing content: the implicit whitespace TextEquivs do not
     belong to the document hierarchy itself.
     (Merging and splitting can be done afterwards.)
-    
-    Return a list of TextEquivs thus processed.
+
+    \b
+    Return a tuple:
+    - the TextLine object (parent of all TextEquivs)
+    - the sequence of resulting TextEquivs (without alternatives)
     '''
-    from rapidfuzz.process import extractOne
-    from rapidfuzz.distance import Levenshtein
     if logger is None:
         logger = getLogger('ocrd.processor.ANNCorrection')
     input_line = '' # concatenation of longest alternatives of each chunk
@@ -410,7 +419,7 @@ def _update_sequence(input_sequence, output_line, output_prob,
         else:
             # this element was deleted
             j = last[1]
-        logger.debug(f"last={last}, [i,j]={[i, j]}")
+        logger.log(5, f"last={last}, [i,j]={[i, j]}")
         if last:
             input_ = input_line[last[0]:i]
             output = output_line[last[1]:j]
@@ -420,12 +429,10 @@ def _update_sequence(input_sequence, output_line, output_prob,
             assert input_ in unicodes, (
                 'no source element alternative "%s" matches input section "%s" in line "%s"' % (
                     str(unicodes), input_, line.id))
-            # select the textequiv most similar to the output
-            unicode, distance, index = extractOne(output, unicodes, scorer=Levenshtein.distance)
-            textequiv = textequivs[index]
-            logger.debug(f"choice={unicode}[{index}]→{output} (distance={distance}) in {unicodes}")
-            logger.debug(f"'{textequiv.Unicode}' → '{output}'"
-                         f"[{str(textequiv.conf if textequiv.index != -1 else -1)} → {prob}]")
+            # select the first textequiv (others will be removed afterwards)
+            textequiv = textequivs[0]
+            logger.log(5, f"{repr(input_)} → {repr(output)}"
+                       f" [{str(textequiv.conf if textequiv.index != -1 else -1)} → {prob}]")
             # try to distribute whitespace onto whitespace, i.e.
             # if input is Whitespace, move any Non-whitespace parts
             # in output to neighbours;
@@ -439,29 +446,29 @@ def _update_sequence(input_sequence, output_line, output_prob,
                         sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
-                    logger.debug('corrected non-whitespace LHS')
+                    logger.log(5, 'corrected non-whitespace LHS')
                 if output and not output.endswith((" ", "\n")):
                     j -= len(output.split(" ")[-1])
                     output = output_line[last[1]:j]
-                    logger.debug('corrected non-whitespace RHS')
+                    logger.log(5, 'corrected non-whitespace RHS')
                 if output.split() and len(sequence):
                     while output.split():
                         sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
-                    logger.debug('corrected non-whitespace middle')
+                    logger.log(5, 'corrected non-whitespace middle')
             else:
                 if output.startswith(" ") and len(sequence) and sequence[-1].index == -1:
                     while output.startswith(" "):
                         sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
-                    logger.debug('corrected whitespace LHS')
+                    logger.log(5, 'corrected whitespace LHS')
                 if output.endswith((" ", "\n")) and i < i_max and textequiv_starts[i][0].index == -1:
                     while output.endswith((" ", "\n")):
                         j -= 1
                         output = output[:-1]
-                    logger.debug('corrected whitespace RHS')
+                    logger.log(5, 'corrected whitespace RHS')
             textequiv.Unicode = output
             #textequiv.conf = np.exp(-score)
             textequiv.conf = np.mean(prob or [1.0])
@@ -476,7 +483,7 @@ def _update_sequence(input_sequence, output_line, output_prob,
         assert not textequiv.Unicode.split() or textequiv.index != -1, (
             'output "%s" will be lost at (whitespace) element %d in line "%s"' % (
                 textequiv.Unicode, i, line.id))
-    return sequence
+    return line, sequence
 
 def _resegment_sequence(sequence, level, logger=None):
     '''Merge and split Words among `sequence` after correction.
