@@ -108,7 +108,7 @@ class Sequence2Sequence(object):
     def __init__(self, logger=None, progbars=True):
         ### model parameters
         # How many samples are trained/decoded together (in parallel)?
-        self.batch_size = 64
+        self.batch_size = 256
         # stateful decoder (implicit state transfer between batches)?
         self.stateful = False
         # number of nodes in the hidden layer (dimensionality of the encoding space)?
