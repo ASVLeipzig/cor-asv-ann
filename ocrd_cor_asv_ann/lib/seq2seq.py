@@ -956,6 +956,10 @@ class Sequence2Sequence(object):
                                 source_text = ''.join(chunk[0][0] if chunk else '' for chunk in source_conf)
                             # start-of-sequence will be added by vectorisation
                             # end-of-sequence already preserved by pickle format
+                            if not source_text.endswith('\n'):
+                                # (except when it's not)
+                                source_conf = [[('\n', 1.0)]]
+                                source_text = '\n'
                         elif unsupervised and '\t' not in line:
                             source_text = target_text = line
                         else:
