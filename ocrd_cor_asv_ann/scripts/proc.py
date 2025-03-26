@@ -36,7 +36,8 @@ def cli(load_model, fast, rejection, charmap, old_suffix, new_suffix, data):
      - * (tab-separated values), with source-target lines,
      - *.pkl (pickle dumps), with source-target lines, where source is either
        - a single string, or
-       - a sequence of character-probability tuples.)
+       - a sequence of character-probability tuples, or
+       - a sequence of alternative lists of character-probability tuples ("confmat").)
     
     For each input file, open a new output file derived from its file name
     by removing `old_suffix` (or the last extension) and appending `new_suffix`.

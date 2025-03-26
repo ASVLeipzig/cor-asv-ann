@@ -98,12 +98,11 @@ class ANNCorrection(Processor):
         self.logger.info("Correcting text in page '%s' at the %s level", page_id, level)
 
         # get textequiv references for all lines:
-        # FIXME: conf with TextEquiv alternatives
         line_sequences = _page_get_line_sequences_at(level, pcgts, logger=self.logger)
 
         # concatenate to strings and get dict of start positions to refs:
-        input_lines, conf, textequiv_starts = \
-            _line_sequences2string_sequences(
+        input_lines, textequiv_starts = \
+            _line_sequences2confmat_sequences(
                 self.s2s.mapping[0], line_sequences,
                 charmap=self.parameter['charmap'])
 
@@ -111,7 +110,7 @@ class ANNCorrection(Processor):
         # FIXME: split into self.batch_size chunks
         output_lines, output_probs, output_scores, alignments = \
             self.s2s.correct_lines(
-                input_lines, conf,
+                input_lines, conf=input_lines,
                 fast=self.parameter['fast_mode'],
                 greedy=self.parameter['fast_mode'])
 
@@ -120,18 +119,21 @@ class ANNCorrection(Processor):
              output_score, alignment, textequivs) in zip(
                  input_lines, output_lines, output_probs,
                  output_scores, alignments, textequiv_starts):
-            self.logger.debug('"%s" -> "%s"', input_line.rstrip('\n'), output_line.rstrip('\n'))
+            input_line_top = ''.join([chunk[0][0] for chunk in input_line])
+            input_line_len = sum((max((len(x[0]) for x in chunk), default=0) for chunk in input_line))
+            self.logger.debug('"%s" -> "%s"', input_line_top.rstrip('\n'), output_line.rstrip('\n'))
 
             # convert soft scores (seen from output) to hard path (seen from input):
-            #realignment = _alignment2path(alignment, len(input_line), len(output_line),
-            #                              1. / self.s2s.voc_size)
+            realignment, distance = _alignment2path(alignment, input_line_len, len(output_line),
+                                                    1. / self.s2s.voc_size)
             # create hard path via minimal edit distance:
-            realignment, distance = _alignment_path(input_line, output_line)
+            # (cannot be applied directly if input_line is in confmat format)
+            #realignment, distance = _alignment_path(input_line, output_line)
 
             # overwrite TextEquiv references:
             new_sequence = _update_sequence(
                 input_line, output_line, output_prob, output_score,
-                realignment, textequivs)
+                realignment, textequivs, self.logger)
 
             # update Word segmentation:
             if level != 'line':
@@ -154,13 +156,13 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
     '''Get TextEquiv sequences for PAGE-XML hierarchy level including whitespace.
     
     Return a list of lines from the document `pcgts`, where
-    each line is a list of TextEquiv objects from the given
+    each line is a list of TextEquiv lists from the given
     hierarchy `level`. This includes artificial TextEquiv for
     implicit whitespace between elements (marked by `index=-1`,
     which is forbidden in the XML Schema).
 
     Thus, for `level=line`, each line is a list of the line's
-    TextEquiv followed by a newline. For `level=word` or `glyph`,
+    TextEquiv list followed by a newline. For `level=word` or `glyph`,
     each line is a list of words, interspersed by spaces and
     followed by a newline.
     '''
@@ -180,7 +182,7 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
                 #logger.debug("Getting text in line '%s'", line.id)
                 textequivs = line.get_TextEquiv()
                 if len(textequivs):
-                    sequences[-1].append(textequivs[0])
+                    sequences[-1].append(textequivs)
                 else:
                     logger.warning("Line '%s' contains no text results", line.id)
             else:
@@ -193,7 +195,7 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
                         #logger.debug("Getting text in word '%s'", word.id)
                         textequivs = word.get_TextEquiv()
                         if textequivs:
-                            sequences[-1].append(textequivs[0])
+                            sequences[-1].append(textequivs)
                         else:
                             logger.warning("Word '%s' contains no text results", word.id)
                             continue # no inter-word
@@ -206,33 +208,33 @@ def _page_get_line_sequences_at(level: str, pcgts: OcrdPage, logger=None):
                             #logger.debug("Getting text in glyph '%s'", glyph.id)
                             textequivs = glyph.get_TextEquiv()
                             if len(textequivs):
-                                sequences[-1].append(textequivs[0])
+                                sequences[-1].append(textequivs)
                             else:
                                 logger.warning("Glyph '%s' contains no text results", glyph.id)
                                 # treat as gap
                                 gap = TextEquivType(Unicode='', conf=1.0)
                                 gap.parent_object_ = glyph
                                 glyph.set_TextEquiv([gap])
-                                sequences[-1].append(gap)
+                                sequences[-1].append([gap])
                     space = TextEquivType(Unicode=' ', conf=1.0, index=-1)
                     space.parent_object_ = word if level == 'word' else glyph
-                    sequences[-1].append(space)
+                    sequences[-1].append([space])
                 if len(sequences[-1]):
                     sequences[-1].pop() # no inter-word
             newline = TextEquivType(Unicode='\n', conf=1.0, index=-1)
             newline.parent_object_ = line if level == 'line' else word if level == 'word' else glyph
-            sequences[-1].append(newline)
+            sequences[-1].append([newline])
     # filter empty lines (containing only newline):
     return [line for line in sequences if len(line) > 1]
 
-def _line_sequences2string_sequences(mapping, line_sequences, charmap=None):
+def _line_sequences2confmat_sequences(mapping, line_sequences, charmap=None):
     '''Concatenate TextEquiv sequences to line strings.
     
     \b
-    Return a 3-tuple:
-    - a list of line strings, 
-    - a list of confidence lists,
-    - a list of dicts from string positions to TextEquiv references.
+    Return a 2-tuple:
+    - a list of lines as confmats (where a confmat is a horizontal list of
+      vertical lists of alternative+confidence tuples)
+    - a list of lines as dicts from string positions to TextEquiv references.
     
     If `charmap` is not None, apply it as a character translation
     table on all characters.
@@ -240,31 +242,31 @@ def _line_sequences2string_sequences(mapping, line_sequences, charmap=None):
     from ..lib.seq2seq import GAP
     if charmap:
         charmap = str.maketrans(charmap)
-    input_lines, conf, textequiv_starts = [], [], []
+    input_lines, textequiv_starts = [], []
     for line_sequence in line_sequences:
         i = 0
-        input_lines.append('')
-        conf.append([])
+        input_lines.append([])
         textequiv_starts.append({})
-        for textequiv in line_sequence:
-            textequiv_starts[-1][i] = textequiv
-            if charmap:
-                textequiv.Unicode = textequiv.Unicode.translate(charmap)
-            j = len(textequiv.Unicode)
-            if not textequiv.Unicode:
-                # empty element (OCR rejection):
-                # this information is still valuable for post-correction,
-                # and we reserved index zero for underspecified inputs,
-                # therefore here we just need to replace the gap with some
-                # unmapped character, like GAP:
-                assert GAP not in mapping, (
-                    'character "%s" must not be mapped (needed for gap repair)' % GAP)
-                textequiv.Unicode = GAP
-                j = 1
-            input_lines[-1] += textequiv.Unicode
-            conf[-1].extend([1.0 if textequiv.conf is None else textequiv.conf] * j)
+        for textequivs in line_sequence:
+            textequiv_starts[-1][i] = textequivs
+            for textequiv in textequivs:
+                if charmap:
+                    textequiv.Unicode = textequiv.Unicode.translate(charmap)
+                if not textequiv.Unicode:
+                    # empty element (OCR rejection):
+                    # this information is still valuable for post-correction,
+                    # and we reserved index zero for underspecified inputs,
+                    # therefore here we just need to replace the gap with some
+                    # unmapped character, like GAP:
+                    assert GAP not in mapping, (
+                        'character "%s" must not be mapped (needed for gap repair)' % GAP)
+                    textequiv.Unicode = GAP
+            # confmat input uses zero-padding within sequences
+            # so we need the longest alternative:
+            j = max((len(textequiv.Unicode) for textequiv in textequivs), default=0)
+            input_lines[-1].append([(textequiv.Unicode, textequiv.conf) for textequiv in textequivs])
             i += j
-    return input_lines, conf, textequiv_starts
+    return input_lines, textequiv_starts
 
 def _alignment2path(alignment, i_max, j_max, min_score):
     '''Find the best path through a soft alignment matrix via Viterbi search.
@@ -280,6 +282,7 @@ def _alignment2path(alignment, i_max, j_max, min_score):
     '''
     # compute Viterbi forward pass:
     viterbi_fw = np.zeros((i_max, j_max), dtype=np.float32)
+    dist = 0
     i, j = 0, 0
     while i < i_max and j < j_max:
         if i > 0:
@@ -311,6 +314,7 @@ def _alignment2path(alignment, i_max, j_max, min_score):
         np.argmax(viterbi_fw[i_max - 1, i_max - j_max - 2:]))
     realignment = {i_max: j_max} # init end of line
     while i >= 0 and j >= 0:
+        dist += 1.0 - alignment[j][i]
         realignment[i] = j # (overwrites any previous assignment)
         if viterbi_fw[i - 1, j] > viterbi_fw[i, j - 1]:
             if viterbi_fw[i - 1, j] > viterbi_fw[i - 1, j - 1]:
@@ -327,11 +331,14 @@ def _alignment2path(alignment, i_max, j_max, min_score):
     # logger = getLogger('ocrd.processor.ANNCorrection')
     # logger.debug('realignment: %s', str(realignment))
     # from matplotlib import pyplot
+    # pyplot.subplot(2, 1, 1)
     # pyplot.imshow(np.array(alignment).T)
-    # pyplot.show()
+    # pyplot.title("alignment")
+    # pyplot.subplot(2, 1, 2)
     # pyplot.imshow(viterbi_fw)
+    # pyplot.title("Viterbi forward")
     # pyplot.show()
-    return realignment
+    return realignment, dist
 
 def _alignment_path(input_text, output_text):
     '''Find the minimal distance path through string pair via Smith-Waterman alignment.
@@ -359,9 +366,8 @@ def _alignment_path(input_text, output_text):
     # logger.debug('realignment: %s', str(realignment))
     return realignment, dist
 
-def _update_sequence(input_line, output_line, output_prob,
-                     score, realignment,
-                     textequivs):
+def _update_sequence(input_sequence, output_line, output_prob,
+                     score, realignment, textequiv_starts, logger=None):
     '''Apply correction across TextEquiv elements along alignment path of one line.
     
     Traverse the path `realignment` through `input_line` and `output_line`,
@@ -380,10 +386,17 @@ def _update_sequence(input_line, output_line, output_prob,
     
     Return a list of TextEquivs thus processed.
     '''
+    from rapidfuzz.process import extractOne
+    from rapidfuzz.distance import Levenshtein
+    if logger is None:
+        logger = getLogger('ocrd.processor.ANNCorrection')
+    input_line = '' # concatenation of longest alternatives of each chunk
+    for chunk in input_sequence:
+        input_line += sorted([x[0] for x in chunk], key=len)[-1]
     i_max = len(input_line)
     j_max = len(output_line)
-    textequivs.setdefault(i_max, None) # init end of line
-    line = textequivs[0].parent_object_
+    textequiv_starts.setdefault(i_max, None) # init end of line
+    line = textequiv_starts[0][0].parent_object_
     if isinstance(line, GlyphType):
         line = line.parent_object_
     if isinstance(line, WordType):
@@ -391,23 +404,28 @@ def _update_sequence(input_line, output_line, output_prob,
     assert isinstance(line, TextLineType), line
     last = []
     sequence = []
-    for i in textequivs:
+    for i in textequiv_starts:
         if i in realignment:
             j = realignment[i]
         else:
             # this element was deleted
             j = last[1]
-        #print(last, [i, j])
+        logger.debug(f"last={last}, [i,j]={[i, j]}")
         if last:
             input_ = input_line[last[0]:i]
             output = output_line[last[1]:j]
             prob = output_prob[last[1]:j]
-            textequiv = textequivs[last[0]]
-            assert textequiv.Unicode == input_, (
-                'source element "%s" does not match input section "%s" in line "%s"' % (
-                    textequiv.Unicode, input_, line.id))
-            #print("'" + textequiv.Unicode + "' → '" + output + "'" \
-            #      "[" + str(textequiv.conf if textequiv.index != -1 else -1) + " → " + str(prob) + "]")
+            textequivs = textequiv_starts[last[0]]
+            unicodes = [textequiv.Unicode for textequiv in textequivs]
+            assert input_ in unicodes, (
+                'no source element alternative "%s" matches input section "%s" in line "%s"' % (
+                    str(unicodes), input_, line.id))
+            # select the textequiv most similar to the output
+            unicode, distance, index = extractOne(output, unicodes, scorer=Levenshtein.distance)
+            textequiv = textequivs[index]
+            logger.debug(f"choice={unicode}[{index}]→{output} (distance={distance}) in {unicodes}")
+            logger.debug(f"'{textequiv.Unicode}' → '{output}'"
+                         f"[{str(textequiv.conf if textequiv.index != -1 else -1)} → {prob}]")
             # try to distribute whitespace onto whitespace, i.e.
             # if input is Whitespace, move any Non-whitespace parts
             # in output to neighbours;
@@ -421,29 +439,29 @@ def _update_sequence(input_line, output_line, output_prob,
                         sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
-                    #print('corrected non-whitespace LHS: ', last, [i, j])
+                    logger.debug('corrected non-whitespace LHS')
                 if output and not output.endswith((" ", "\n")):
                     j -= len(output.split(" ")[-1])
                     output = output_line[last[1]:j]
-                    #print('corrected non-whitespace RHS: ', last, [i, j])
+                    logger.debug('corrected non-whitespace RHS')
                 if output.split() and len(sequence):
                     while output.split():
                         sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
-                    #print('corrected non-whitespace middle: ', last, [i, j])
+                    logger.debug('corrected non-whitespace middle')
             else:
                 if output.startswith(" ") and len(sequence) and sequence[-1].index == -1:
                     while output.startswith(" "):
                         sequence[-1].Unicode += output[0]
                         last[1] += 1
                         output = output[1:]
-                    #print('corrected whitespace LHS: ', last, [i, j])
-                if output.endswith((" ", "\n")) and i < i_max and textequivs[i].index == -1:
+                    logger.debug('corrected whitespace LHS')
+                if output.endswith((" ", "\n")) and i < i_max and textequiv_starts[i][0].index == -1:
                     while output.endswith((" ", "\n")):
                         j -= 1
                         output = output[:-1]
-                    #print('corrected whitespace RHS: ', last, [i, j])
+                    logger.debug('corrected whitespace RHS')
             textequiv.Unicode = output
             #textequiv.conf = np.exp(-score)
             textequiv.conf = np.mean(prob or [1.0])

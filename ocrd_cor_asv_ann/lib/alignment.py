@@ -278,7 +278,8 @@ class Alignment():
             table = table[:limit]
         return table, total
         
-    def get_levenshtein_distance(self, source_text, target_text):
+    @staticmethod
+    def get_levenshtein_distance(source_text, target_text):
         """Align strings and calculate raw unweighted edit distance between its codepoints."""
         from rapidfuzz.distance import Levenshtein
         dist = Levenshtein.distance(source_text, target_text)

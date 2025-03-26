@@ -44,7 +44,8 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata
      - * (tab-separated values), with source-target lines
      - *.pkl (pickle dumps), with source-target lines, where source is either
        - a single string, or
-       - a sequence of character-probability tuples.)
+       - a sequence of character-probability tuples, or
+       - a sequence of alternative lists of character-probability tuples ("confmat").)
     
     If no `valdata` were given, split off a random fraction of lines for
     validation. Otherwise, use only those files for validation.

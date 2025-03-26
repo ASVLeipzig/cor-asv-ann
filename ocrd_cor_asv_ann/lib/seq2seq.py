@@ -798,7 +798,8 @@ class Sequence2Sequence(object):
             return [], [], [], []
         
         # vectorize:
-        encoder_input_data, _, _, _ = self.vectorize_lines(lines, lines, conf)
+        encoder_input_data, _, _, _ = self.vectorize_lines(
+            lines, [[] for _ in lines], conf)
 
         if fast:
             # encode and decode in batch (all lines at once):

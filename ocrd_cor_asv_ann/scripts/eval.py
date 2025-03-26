@@ -42,7 +42,8 @@ def cli(load_model, fast, rejection, normalization, charmap, gt_level, confusion
      - * (tab-separated values), with source-target lines
      - *.pkl (pickle dumps), with source-target lines, where source is either
        - a single string, or
-       - a sequence of character-probability tuples.)
+       - a sequence of character-probability tuples, or
+       - a sequence of alternative lists of character-probability tuples ("confmat").)
     """
     if not 'TF_CPP_MIN_LOG_LEVEL' in os.environ:
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
