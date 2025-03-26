@@ -646,7 +646,7 @@ class Sequence2Sequence(object):
             self.logger.critical('training failed')
             self.status = 1
     
-    def evaluate(self, filenames, fast=False, normalization='historic_latin', charmap={}, gt_level=1,
+    def evaluate(self, filenames, fast=False, normalization='historic_latin', charmap=None, gt_level=1,
                  confusion=10, histogram=True):
         '''evaluate model on text files
         
@@ -751,7 +751,7 @@ class Sequence2Sequence(object):
         self.logger.info("WER greedy: %.3f±%.3f", w_greedy_counts.mean, math.sqrt(w_greedy_counts.varia))
         self.logger.info("WER beamed: %.3f±%.3f", w_beamed_counts.mean, math.sqrt(w_beamed_counts.varia))
         
-    def predict(self, filenames, fast=False, greedy=False, charmap={}):
+    def predict(self, filenames, fast=False, greedy=False, charmap=None):
         '''apply model on text files
         
         Pass the character sequence of lines in ``filenames``, paired into
@@ -835,7 +835,7 @@ class Sequence2Sequence(object):
     
     # for fit_generator()/predict_generator()/evaluate_generator()/standalone
     # -- looping, but not shuffling
-    def gen_data(self, filenames, split=None, train=False, unsupervised=False, charmap={}, reset_cb=None):
+    def gen_data(self, filenames, split=None, train=False, unsupervised=False, charmap=None, reset_cb=None):
         '''generate batches of vector data from text file
         
         Open `filenames` in text mode, loop over them producing `batch_size`
@@ -908,7 +908,7 @@ class Sequence2Sequence(object):
                 yield ([encoder_input_data, decoder_input_data],
                        decoder_output_data, decoder_output_weights)
                     
-    def gen_lines(self, filenames, repeat=True, split=None, train=False, unsupervised=False, charmap={}):
+    def gen_lines(self, filenames, repeat=True, split=None, train=False, unsupervised=False, charmap=None):
         """Generate batches of lines from the given files.
         
         split...

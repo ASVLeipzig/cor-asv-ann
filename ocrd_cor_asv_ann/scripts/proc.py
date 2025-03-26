@@ -16,7 +16,7 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.option('-f', '--fast', is_flag=True, help='only decode greedily')
 @click.option('-r', '--rejection', default=0.5, type=click.FloatRange(0, 1.0),
               help='probability of the input characters in all hypotheses (set 0 to use raw predictions)')
-@click.option('-C', '--charmap', default={}, help='mapping for input characters before passing to correction; ' \
+@click.option('-C', '--charmap', default=None, help='mapping for input characters before passing to correction; ' \
               'can be used to adapt to character set mismatch between input and model (without relying on underspecification alone)')
 @click.option('-S', '--old-suffix', default='', help='Suffix to remove from input files for output files')
 @click.option('-s', '--new-suffix', default='.cor.txt', help='Suffix to append to input files for output files')
