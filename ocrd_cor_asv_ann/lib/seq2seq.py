@@ -601,7 +601,7 @@ class Sequence2Sequence(object):
         unless `val_filenames` is given, in which case only those files are used
         for validation.
         '''
-        from keras.callbacks import EarlyStopping, TerminateOnNaN
+        from keras.callbacks import EarlyStopping, TerminateOnNaN, ModelCheckpoint
         from .callbacks import StopSignalCallback, ResetStatesCallback
         from .keras_train import fit_generator_autosized, evaluate_generator_autosized
 
@@ -618,7 +618,9 @@ class Sequence2Sequence(object):
         # Run training
         earlystopping = EarlyStopping(monitor='val_loss', patience=3, verbose=1,
                                       mode='min', restore_best_weights=True)
-        callbacks = [earlystopping, TerminateOnNaN(),
+        checkpointer = ModelCheckpoint("model.ckpt.weights-{epoch:02d}-{val_loss:.2f}.h5",
+                                       monitor='val_loss', save_weights_only=True)
+        callbacks = [earlystopping, TerminateOnNaN(), checkpointer,
                      StopSignalCallback(logger=self.logger)]
         history = fit_generator_autosized(
             self.encoder_decoder_model,

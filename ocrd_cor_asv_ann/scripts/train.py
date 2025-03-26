@@ -9,16 +9,16 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
 @click.command(context_settings=CONTEXT_SETTINGS)
 @click.option('-m', '--save-model', default="model.h5", help='model file for saving',
-              type=click.Path(dir_okay=False, writable=True))
+              type=click.Path(dir_okay=False, writable=True), show_default=True)
 @click.option('--load-model', help='model file for loading (incremental/pre-training)',
               type=click.Path(dir_okay=False, exists=True))
 @click.option('--init-model', help='model file for initialisation (transfer from LM or shallower model)',
               type=click.Path(dir_okay=False, exists=True))
 @click.option('--reset-encoder', is_flag=True, help='reset encoder weights after load/init')
 @click.option('-w', '--width', default=128, help='number of nodes per hidden layer',
-              type=click.IntRange(min=1, max=9128))
+              type=click.IntRange(min=1, max=9128), show_default=True)
 @click.option('-d', '--depth', default=2, help='number of stacked hidden layers',
-              type=click.IntRange(min=1, max=10))
+              type=click.IntRange(min=1, max=10), show_default=True)
 @click.option('-v', '--valdata', multiple=True, help='file to use for validation (instead of random split)',
               type=click.Path(dir_okay=False, exists=True))
 # click.File is impossible since we do not now a priori whether
