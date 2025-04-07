@@ -3,6 +3,8 @@ import unicodedata
 import math
 import logging
 import pickle
+import itertools
+
 import numpy as np
 import h5py
 
@@ -155,6 +157,8 @@ class Sequence2Sequence(object):
         self.scheduled_sampling = None # 'linear'/'sigmoid'/'exponential'/None
         # rate of dropped output connections in encoder and decoder HL?
         self.dropout = 0.2
+        # learning rate
+        self.lr = 0.001 # Adam (old) default
         
         ### beam decoder inference parameters
         # probability of the input character candidate in each hypothesis
@@ -207,11 +211,12 @@ class Sequence2Sequence(object):
         if batch_size:
             self.batch_size = batch_size
 
+        tf.compat.v1.disable_v2_behavior()
         config = tf.compat.v1.ConfigProto()
         config.gpu_options.allow_growth = True
-        K.set_session(tf.compat.v1.Session(config=config))
         # self.sess = tf.compat.v1.Session()
-        # K.set_session(self.sess)
+        self.sess = tf.compat.v1.Session(config=config)
+        K.set_session(self.sess)
         
         # automatically switch to CuDNNLSTM if CUDA GPU is available:
         has_cuda = K.backend() == 'tensorflow' and K.tensorflow_backend._get_available_gpus()
@@ -376,7 +381,8 @@ class Sequence2Sequence(object):
             #bias = K.variable(np.zeros((self.voc_size,)), name='char_output_bias') # trainable=True by default
             #return K.softmax(K.dot(h, K.transpose(K.dot(char_embedding.embeddings, proj))) + bias)
             # simplified variant with no extra weights (50% faster, equally accurate):
-            return K.softmax(K.dot(x, K.transpose(char_embedding.kernel)))
+            out = K.dot(x, K.transpose(char_embedding.kernel))
+            return K.softmax(out - K.max(out))
         char_output_proj = TimeDistributed(Lambda(char_embedding_transposed, name='transpose+softmax'),
                                           name='char_output_projection')
         decoder_output = char_output_proj(decoder_output)
@@ -482,10 +488,11 @@ class Sequence2Sequence(object):
         ## Compile model
         self._recompile()
         # for tf access from multiple threads
-        # self.encoder_model._make_predict_function()
-        # self.decoder_model._make_predict_function()
+        self.encoder_model._make_predict_function()
+        self.decoder_model._make_predict_function()
         # self.sess.run(tf.global_variables_initializer())
         self.graph = tf.compat.v1.get_default_graph()
+        #self.graph = tf.compat.v1.get_default_session()
         self.status = 1
     
     def _recompile(self):
@@ -493,7 +500,7 @@ class Sequence2Sequence(object):
         
         self.encoder_decoder_model.compile(
             loss='categorical_crossentropy', # loss_weights=[1.,1.] if self.lm_loss
-            optimizer=Adam(clipnorm=5), #'adam',
+            optimizer=Adam(clipnorm=5, learning_rate=self.lr), #'adam',
             sample_weight_mode='temporal') # sample_weight slows down training slightly (20%)
     
     def _reconfigure_for_mapping(self):
@@ -624,14 +631,14 @@ class Sequence2Sequence(object):
                      StopSignalCallback(logger=self.logger)]
         history = fit_generator_autosized(
             self.encoder_decoder_model,
-            self.gen_data(filenames, split_rand, train=True),
+            threadsafe(self.gen_data(filenames, split_rand, train=True)),
             epochs=self.epochs,
             workers=1,
             # (more than 1 would effectively increase epoch size)
-            use_multiprocessing=not self.scheduled_sampling,
+            use_multiprocessing=False, #not self.scheduled_sampling,
             # (cannot access session/graph for scheduled sampling in other process,
             #  cannot access model for reset callback in other process)
-            validation_data=self.gen_data(val_filenames or filenames, split_rand, train=False),
+            validation_data=threadsafe(self.gen_data(val_filenames or filenames, split_rand, train=False)),
             verbose=1 if self.progbars else 0,
             callbacks=callbacks)
         
@@ -840,10 +847,10 @@ class Sequence2Sequence(object):
                 output_scores.append(score)
                 alignments.append(alignment)
         return output_lines, output_probs, output_scores, alignments
-    
+
     # for fit_generator()/predict_generator()/evaluate_generator()/standalone
     # -- looping, but not shuffling
-    def gen_data(self, filenames, split=None, train=False, unsupervised=False, charmap=None, reset_cb=None):
+    def gen_data(self, filenames, split=None, train=False, unsupervised=False, charmap=None, reset_cb=None, cache_files=False):
         '''generate batches of vector data from text file
         
         Open `filenames` in text mode, loop over them producing `batch_size`
@@ -854,11 +861,20 @@ class Sequence2Sequence(object):
         (upper vs lower partition).
         Yield vector data batches (for fit_generator/evaluate_generator).
         '''
-        
+        from keras import backend as K
+
+        print("generating vector batches")
         epoch = 0
         if train and self.scheduled_sampling:
             sample_ratio = 0
-        for batch in self.gen_lines(filenames, True, split, train, unsupervised, charmap):
+        line_generator = self.gen_lines(filenames, True, split, train, unsupervised, charmap)
+        if cache_files:
+            # get 1 epoch (i.e. until False), then repeat (including False between epochs)
+            line_generator = \
+                itertools.cycle(
+                    itertools.chain(
+                        itertools.takewhile(lambda x: x, line_generator), [False]))
+        for batch in line_generator:
             if not batch:
                 epoch += 1
                 yield False # signal end of epoch to autosized fit/evaluate
@@ -874,7 +890,13 @@ class Sequence2Sequence(object):
                     else:
                         raise Exception('unknown function "%s" for scheduled sampling' % self.scheduled_sampling)
                     #self.logger.debug('sample ratio for this epoch:', sample_ratio)
+                    K.set_session(self.sess)
                     with self.graph.as_default():
+                    #tf.compat.v1.reset_default_graph()
+                    #with self.sess.as_default():
+                    # with ExitStack() as stack:
+                    #     stack.enter_context(self.sess.as_default())
+                    #     stack.enter_context(self.graph.as_default())
                         self._resync_decoder()
             else:
                 lines_source, lines_sourceconf, lines_target, lines_filename = batch
@@ -891,8 +913,13 @@ class Sequence2Sequence(object):
                     indexes = line_schedules < sample_ratio # respect current schedule
                     if np.count_nonzero(indexes) > 0:
                         # ensure the generator thread gets to see the same tf graph:
-                        # with self.sess.as_default():
+                        K.set_session(self.sess)
                         with self.graph.as_default():
+                        #tf.compat.v1.reset_default_graph()
+                        #with self.sess.as_default():
+                        # with ExitStack() as stack:
+                        #     stack.enter_context(self.sess.as_default())
+                        #     stack.enter_context(self.graph.as_default())
                             decoder_input_data_sampled, _, _, _, _ = self.decode_batch_greedy(encoder_input_data)
                             # overwrite scheduled lines with data sampled from decoder instead of GT:
                             decoder_input_data.resize( # zero-fill larger time-steps (in-place)
@@ -924,6 +951,7 @@ class Sequence2Sequence(object):
         unpickle...
         normalize...
         """
+        print("generating string batches")
         split_ratio = 0.2
         epoch = 0
         if charmap:
@@ -1247,6 +1275,21 @@ class Sequence2Sequence(object):
             scores = output[0]
             states_values = list(output[1:])
             alignment = states_values[-1]
+            def dbgdec(seq):
+                res = ""
+                for step in seq:
+                    if res.endswith('\n') or not np.any(step):
+                        return res
+                    idx = np.nanargmax(step[1:]) + 1
+                    res += self.mapping[1][idx]
+                return res
+            for nanj, nani in zip(*np.where(np.all(np.isnan(scores), axis=2))):
+                input_ = dbgdec(encoder_input_data[nanj])
+                assert all(np.isnan(scores[nanj, nani]))
+                output = decoder_output_sequences[nanj]
+                print(input_, output)
+                scores[nanj, nani, :] = 0.0
+                scores[nanj, nani, 0] = 1.0
             indexes = np.nanargmax(scores[:, :, 1:], axis=2) # without index zero (underspecification)
             #decoder_input_data = np.eye(self.voc_size, dtype=np.uint32)[indexes+1] # unit vectors
             decoder_input_data = scores # soft/confidence input (much better)
@@ -1606,3 +1649,14 @@ class Node(object):
         return self.pro_cost() > other.pro_cost()
     def __ge__(self, other):
         return self.pro_cost() >= other.pro_cost()
+
+class threadsafe():
+    def __init__(self, it):
+        import threading
+        self.it = it
+        self.lock = threading.Lock()
+    def __iter__(self):
+        return self
+    def __next__(self):
+        with self.lock:
+            return next(self.it)

@@ -64,6 +64,7 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata
     s2s = Sequence2Sequence(logger=logging.getLogger(__name__), progbars=True)
     s2s.width = width
     s2s.depth = depth
+    s2s.scheduled_sampling = 'sigmoid'
     s2s.configure()
     
     # there could be both, a full pretrained model to load,
@@ -72,6 +73,7 @@ def cli(save_model, load_model, init_model, reset_encoder, width, depth, valdata
         s2s.load_config(load_model)
         if s2s.width == width and s2s.depth == depth:
             logging.info('loading weights from existing model for incremental training')
+            s2s.lr = 0.0001 # smaller
             s2s.configure()
             s2s.load_weights(load_model)
         else:
