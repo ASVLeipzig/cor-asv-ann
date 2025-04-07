@@ -18,7 +18,8 @@ jobs:
       - run: mkdir test-results
       - run:
           name: Test with pytest and measure code coverage
-          command: make coverage PYTEST_ARGS="-vv --junitxml=test-results/pytest.xml"
+          # isolate tests so memory from loaded model gets freed in between
+          command: make coverage PYTEST_ARGS="-vv --isolate --junitxml=test-results/pytest.xml"
           no_output_timeout: 59m
       - save_cache:
           key: v0.1-model-s2s.dta19.Fraktur4.d2.w0512
