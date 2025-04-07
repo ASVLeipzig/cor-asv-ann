@@ -51,7 +51,7 @@ build:
 	$(PYTHON) -m build .
 
 models/%.h5:
-	wget https://git.informatik.uni-leipzig.de/ocr-d/cor-asv-ann-models/-/raw/master/$(@F)
+	wget -P models https://git.informatik.uni-leipzig.de/ocr-d/cor-asv-ann-models/-/raw/master/$(@F)
 
 # TODO: once core#1149 is fixed, remove this line (so the local copy can be used)
 test: export OCRD_BASEURL=https://github.com/OCR-D/assets/raw/refs/heads/master/data/
