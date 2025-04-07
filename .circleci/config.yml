@@ -11,8 +11,18 @@ jobs:
       - checkout
       - run: make deps deps-test
       - run: make install
+      # restore pretrained model from previous download
+      - restore_cache:
+          key: v0.1-model-s2s.dta19.Fraktur4.d2.w0512
       - run: mkdir test-results
-      - run: make coverage PYTEST_ARGS="-vv --junitxml=test-results/pytest.xml"
+      - run:
+          name: Test with pytest and measure code coverage
+          command: make coverage PYTEST_ARGS="-vv --junitxml=test-results/pytest.xml"
+          no_output_timeout: 30m
+      - save_cache:
+          key: v0.1-model-s2s.dta19.Fraktur4.d2.w0512
+          paths:
+            - models
       - run:
           name: Generate coverage reports
           command: |
