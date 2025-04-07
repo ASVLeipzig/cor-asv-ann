@@ -1,7 +1,9 @@
 version: 2.1
+orbs:
+  codecov: codecov/codecov@1.0.5
 jobs:
 
-  build-python3:
+  test-python:
     docker:
       - image: ocrd/core-cuda-tf1
     environment:
@@ -9,12 +11,31 @@ jobs:
       PYTHON: python3
     steps:
       - checkout
-      - run: make deps
+      - run: make deps deps-test
       - run: make install
+      - run: mkdir test-results
+      - run: make coverage PYTEST_ARGS="-vv --junitxml=test-results/pytest.xml"
+      - run: |
+          coverage html -d test-results
+          coverage json -o test-results/coverage.json
+          coverage xml -o test-results/coverage.xml
+      - store_test_results:
+          path: test-results
+      - codecov/upload
+    resource_class: large
+
+  build-docker:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run: make docker
+    resource_class: large
 
   deploy-docker:
     docker:
-      - image: circleci/buildpack-deps:stretch
+      - image: circleci/buildpack-deps
     steps:
       - checkout
       - setup_remote_docker: # https://circleci.com/docs/2.0/building-docker-images/
@@ -24,15 +45,29 @@ jobs:
           name: Login to Docker Hub
           command: echo "$DOCKERHUB_PASS" | docker login --username "$DOCKERHUB_USER" --password-stdin
       - run: docker push ocrd/cor-asv-ann
-      
+
+  deploy-pypi:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run: pip install twine build
+      - run: make build
+      - run: twine upload dist/*
+
 workflows:
   version: 2
   build-and-test:
     jobs:
-      - build-python3
+      - test-python
+      - build-docker
   deploy:
     jobs:
       - deploy-docker:
+          filters:
+            branches:
+              only: master
+      - deploy-pypi:
           filters:
             branches:
               only: master

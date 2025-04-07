@@ -3,7 +3,7 @@ PYTHON ?= python
 PIP ?= pip
 DOCKER_BASE_IMAGE = docker.io/ocrd/core-cuda-tf1:v3.3.0
 DOCKER_TAG ?= ocrd/cor-asv-ann
-PYTEST_ARGS ?= --junit-xml=test.xml
+PYTEST_ARGS ?= -vv
 
 # BEGIN-EVAL makefile-parser --make-help Makefile
 
@@ -60,6 +60,11 @@ test: models/s2s.dta19.Fraktur4.d2.w0512.adam.attention.stateless.variational-dr
 test: tests/assets
 	$(PYTHON) -m pytest  tests --durations=0 $(PYTEST_ARGS)
 
+coverage:
+	coverage erase
+	$(MAKE) test PYTHON="coverage run"
+	coverage report -m
+
 #
 # Assets
 #
@@ -85,4 +90,4 @@ docker:
 	--build-arg BUILD_DATE=$$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
 	-t $(DOCKER_TAG) .
 
-.PHONY: help deps install install-dev build docker deps-test test
+.PHONY: help deps install install-dev build docker deps-test test coverage

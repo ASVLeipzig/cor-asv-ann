@@ -1,6 +1,6 @@
-s2s.*.h5
-s2s.*.pkl
-s2s.*.log
+*.h5
+*.pkl
+*.log
 s2s.*.len
 s2s.*.png
 s2s.*.csv
@@ -9,8 +9,7 @@ __pycache__/
 *.egg-info/
 *.py[cod]
 *.whl
-env/
-env3/
+/env*/
 TAGS
 /build
 /dist
