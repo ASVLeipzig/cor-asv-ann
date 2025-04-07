@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel", "setuptools-ocrd"]
+
+[project]
+name = "ocrd-cor-asv-ann"
+authors = [
+    {name = "Robert Sachunsky", email = "sachunsky@informatik.uni-leipzig.de"},
+]
+description = "sequence-to-sequence translator for noisy channel error correction"
+readme = "README.md"
+license.text = "Apache License 2.0"
+requires-python = ">=3.8"
+
+dynamic = ["version", "dependencies"]
+
+# https://pypi.org/classifiers/
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Other Audience",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Text Processing",
+]
+
+[project.optional-dependencies]
+plotting = ["matplotlib"]
+
+[project.scripts]
+cor-asv-ann-compare = "ocrd_cor_asv_ann.scripts.compare:cli"
+cor-asv-ann-train = "ocrd_cor_asv_ann.scripts.train:cli"
+cor-asv-ann-eval = "ocrd_cor_asv_ann.scripts.eval:cli"
+cor-asv-ann-proc = "ocrd_cor_asv_ann.scripts.proc:cli"
+cor-asv-ann-repl = "ocrd_cor_asv_ann.scripts.repl:cli"
+ocrd-cor-asv-ann-process = "ocrd_cor_asv_ann.wrapper.transcode:ocrd_cor_asv_ann_process"
+ocrd-cor-asv-ann-evaluate = "ocrd_cor_asv_ann.wrapper.evaluate:ocrd_cor_asv_ann_evaluate"
+ocrd-cor-asv-ann-align = "ocrd_cor_asv_ann.wrapper.align:ocrd_cor_asv_ann_align"
+ocrd-cor-asv-ann-join = "ocrd_cor_asv_ann.wrapper.join:ocrd_cor_asv_ann_join"
+ocrd-cor-asv-ann-mark = "ocrd_cor_asv_ann.wrapper.mark:ocrd_cor_asv_ann_mark"
+
+[project.urls]
+Homepage = "https://github.com/ASVLeipzig/cor-asv-ann"
+Repository = "https://github.com/ASVLeipzig/cor-asv-ann.git"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+optional-dependencies.test = {file = ["requirements_test.txt"]}
+
+[tool.setuptools]
+packages = ["ocrd_cor_asv_ann", "ocrd_cor_asv_ann.lib", "ocrd_cor_asv_ann.wrapper", "ocrd_cor_asv_ann.scripts"]
+package-data = {"*" = ["ocrd-tool.json"]}
+
+[tool.coverage.run]
+branch = true
+source = ["ocrd_cor_asv_ann"]
