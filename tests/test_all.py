@@ -23,9 +23,13 @@ def test_transcode(workspace, subtests, record_property):
     pages = page_id.split(',')
     page1 = pages[0]
     grps = [grp for grp in ws.mets.file_groups
-            # above PC model does not work well with models based on GT4HistOCR transcriptions
-            # (need to re-train)
-            if 'OCR-D-OCR-' in grp and not 'gt4histocr' in grp]
+            if 'OCR-D-OCR-' in grp and (
+                    # above PC model does not work well with models based on GT4HistOCR transcriptions
+                    # (need to re-train)
+                    not 'gt4histocr' in grp and
+                    # also, without GPU these combinations take too long, so skip more variants
+                    not 'OCRO' in grp and
+                    not 'Latin' in grp)]
     for input_file_grp in grps:
         inputs = list(ws.find_files(file_grp=input_file_grp, mimetype=MIMETYPE_PAGE))
         iconfs = [float(conf) for input in inputs
