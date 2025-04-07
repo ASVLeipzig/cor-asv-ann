@@ -15,13 +15,19 @@ jobs:
       - run: make install
       - run: mkdir test-results
       - run: make coverage PYTEST_ARGS="-vv --junitxml=test-results/pytest.xml"
-      - run: |
-          coverage html -d test-results
-          coverage json -o test-results/coverage.json
-          coverage xml -o test-results/coverage.xml
+      - run:
+          name: Generate coverage reports
+          command: |
+            coverage html -d test-results
+            coverage json -o test-results/coverage.json
+            coverage xml -o test-results/coverage.xml
       - store_test_results:
           path: test-results
-      - codecov/upload
+      - run:
+          name: Upload to Codecov.io
+          command: |
+            pip install codecov-cli
+            codecovcli --auto-load-params-from CircleCI --verbose upload-process -t "$CODECOV_TOKEN" -n "$CIRCLE_JOB" --build-url "$CIRCLE_BUILD_URL" --build-code "$CIRCLE_BUILD_NUM" -B "$CIRCLE_BRANCH" --dir test-results
     resource_class: large
 
   build-docker:
