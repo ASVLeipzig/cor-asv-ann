@@ -1,0 +1,7 @@
+tests
+testdata
+dist
+build
+*.egg-info
+models
+data-processing

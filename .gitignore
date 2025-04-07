@@ -8,6 +8,7 @@ s2s.*.csv
 __pycache__/
 *.egg-info/
 *.py[cod]
+*.whl
 env/
 env3/
 TAGS
