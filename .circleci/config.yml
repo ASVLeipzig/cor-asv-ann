@@ -70,7 +70,7 @@ jobs:
       - image: cimg/python:3.8
     steps:
       - checkout
-      - run: pip install twine build
+      - run: pip install -U twine build packaging
       - run: make build
       - run: twine upload dist/*
 
