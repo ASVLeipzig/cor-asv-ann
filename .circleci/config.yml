@@ -32,10 +32,13 @@ jobs:
             coverage json -o test-results/coverage.json
             coverage xml -o test-results/coverage.xml
       - store_test_results:
+          path: test-results/pytest.xml
+      - store_artifacts:
           path: test-results
       - run:
           name: Upload to Codecov.io
           command: |
+            sudo apt-get install -y g++
             pip install codecov-cli
             codecovcli --auto-load-params-from CircleCI --verbose upload-process -t "$CODECOV_TOKEN" -n "$CIRCLE_JOB" --build-url "$CIRCLE_BUILD_URL" --build-code "$CIRCLE_BUILD_NUM" -B "$CIRCLE_BRANCH" --dir test-results
     resource_class: large

@@ -29,7 +29,8 @@ def test_transcode(workspace, subtests, record_property):
                     not 'gt4histocr' in grp and
                     # also, without GPU these combinations take too long, so skip more variants
                     not 'OCRO' in grp and
-                    not 'Latin' in grp)]
+                    not 'Latin' in grp and
+                    not 'deu' in grp)]
     for input_file_grp in grps:
         inputs = list(ws.find_files(file_grp=input_file_grp, mimetype=MIMETYPE_PAGE))
         iconfs = [float(conf) for input in inputs
