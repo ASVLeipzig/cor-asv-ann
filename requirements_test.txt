@@ -1,4 +1,4 @@
 pytest
-pytest-xdist
+pytest-isolate
 pytest-subtests
 coverage
