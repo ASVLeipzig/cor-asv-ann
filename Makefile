@@ -1,8 +1,9 @@
 SHELL = /bin/bash
 PYTHON ?= python
 PIP ?= pip
-DOCKER_BASE_IMAGE = docker.io/ocrd/core-cuda-tf1:v3.3.0
+DOCKER_BASE_IMAGE ?= docker.io/ocrd/core-cuda-tf1:latest
 DOCKER_TAG ?= ocrd/cor-asv-ann
+DOCKER ?= docker
 PYTEST_ARGS ?= -vv
 
 # BEGIN-EVAL makefile-parser --make-help Makefile
@@ -84,7 +85,7 @@ tests/assets: testdata
 	cp -a $</data/* $@
 
 docker:
-	docker build \
+	$(DOCKER) build \
 	--build-arg DOCKER_BASE_IMAGE=$(DOCKER_BASE_IMAGE) \
 	--build-arg VCS_REF=$$(git rev-parse --short HEAD) \
 	--build-arg BUILD_DATE=$$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
